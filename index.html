@@ -1,0 +1,1468 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>NetScan Mockup</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+tailwind.config={theme:{extend:{fontFamily:{sans:['Prompt','sans-serif'],mono:['JetBrains Mono','monospace']},colors:{appBg:'#F8F6EF',primary:'#2563EB'}}}}
+</script>
+<style>
+  body{background:#cfcbc2;min-height:100vh;margin:0;display:flex;justify-content:center;align-items:center;font-family:Prompt,sans-serif}
+  .device{width:100%;max-width:1180px;height:100vh;background:#F8F6EF;position:relative;overflow:hidden;display:flex;flex-direction:column}
+  @media (min-width:1200px){.device{height:92vh;max-height:800px;border-radius:32px;border:10px solid #18181b;box-shadow:0 30px 60px -15px rgba(0,0,0,.45)}}
+  #screen{flex:1;position:relative;overflow:hidden}
+  .view{position:absolute;inset:0;overflow-y:auto;display:flex;flex-direction:column}
+  .view>*{flex-shrink:0}
+  ::-webkit-scrollbar{display:none} *{scrollbar-width:none}
+  @keyframes scan{0%{top:8%}50%{top:88%}100%{top:8%}}
+  .scanline{animation:scan 2.4s ease-in-out infinite}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+  .pop{animation:pop .18s ease-out}
+  @keyframes up{from{transform:translateY(40px);opacity:.6}to{transform:none;opacity:1}}
+  .sheet{animation:up .22s ease-out}
+  .spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body class="text-gray-800 antialiased">
+<div class="device">
+  <div class="flex justify-between items-center px-6 h-7 text-[13px] text-gray-600 shrink-0 select-none">
+    <span id="clock">11:30</span>
+    <span class="w-14 h-1 rounded-full bg-gray-400/70"></span>
+    <span class="flex items-center gap-1.5"><i class="ph ph-bluetooth"></i><i class="ph ph-bell-slash"></i><i class="ph ph-wifi-high"></i><span class="border border-gray-500 rounded px-1 text-[10px] leading-4">50</span></span>
+  </div>
+  <div id="screen"></div>
+</div>
+<div id="demo" class="fixed left-3 bottom-3 z-50 text-sm"></div>
+<div id="tour" class="fixed right-3 bottom-3 z-50 text-sm"></div>
+
+<script>
+/* ===================== STATE ===================== */
+const pad=n=>String(n).padStart(2,'0');
+const nowStr=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const longName=n=>'GigabitEthernet'+n.slice(2);
+const RESERVED=[1,1002,1003,1004,1005];
+const MGMT_REASON='carries the management session; a change could cut the app off before rollback';
+
+let S={
+  view:'login', role:'admin', user:'non', serverOnline:false, deviceOnline:false,
+  tab:'overview', selPort:0, protectedOnly:false, menu:false, sheet:false, modal:null, snack:null,
+  form:{}, cfg:{}, dry:null, confirmText:'', simFail:false, reloadArm:false, reloadText:'', checking:false, syncing:false,
+  lastVerified:'2026-10-11 22:23:20', snap:4, nextId:1,
+  ports:[
+    {n:'Gi0/0',vlan:1,up:true,admin:true,tag:'MGMT',ev:'member of the management VLAN, path to the default gateway'},
+    {n:'Gi0/1',vlan:100,up:true,admin:true,tag:null},
+    {n:'Gi0/2',vlan:1,up:true,admin:true,tag:'UPLINK',ev:'member of the management VLAN'},
+    {n:'Gi0/3',vlan:1,up:true,admin:true,tag:'UPLINK',ev:'member of the management VLAN'},
+    {n:'Gi0/4',vlan:1,up:true,admin:true,tag:'UPLINK',ev:'member of the management VLAN'},
+    {n:'Gi0/5',vlan:1,up:true,admin:true,tag:'UPLINK',ev:'member of the management VLAN'},
+    {n:'Gi0/6',vlan:1,up:true,admin:true,tag:'UPLINK',ev:'member of the management VLAN'},
+    {n:'Gi0/7',vlan:300,up:false,admin:true,tag:null},
+  ],
+  vlans:[
+    {id:1,name:'default',st:'active'},{id:100,name:'VLAN100',st:'active'},{id:200,name:'VLAN0200',st:'active'},{id:300,name:'VLAN0300',st:'active'},
+    {id:1002,name:'fddi-default',st:'act/unsup'},{id:1003,name:'trcrf-default',st:'act/unsup'},{id:1004,name:'fddinet-default',st:'act/unsup'},{id:1005,name:'trbrf-default',st:'act/unsup'},
+  ],
+  history:[
+    {t:'ok',title:'Applied and verified',at:'2026-10-11 22:23:11',by:'non',d:'all post-conditions hold'},
+    {t:'info',title:'Snapshot #4 taken',at:'2026-10-11 22:23:10',by:'non',d:'snapshot 4'},
+    {t:'ok',title:'Applied and verified',at:'2026-10-11 21:52:45',by:'non',d:'all post-conditions hold'},
+    {t:'info',title:'Snapshot #3 taken',at:'2026-10-11 21:52:44',by:'non',d:'snapshot 3'},
+    {t:'rej',title:'Rejected before execution',at:'2026-10-11 21:46:19',by:'admin',port:'Gi0/2',d:'shutdown GigabitEthernet0/2: GigabitEthernet0/2 carries the management session (managementVlanMember, possibleManagementPath); a change could cut the app off before rollback'},
+    {t:'rej',title:'Rejected before execution',at:'2026-10-11 21:37:02',by:'admin',port:'Gi0/0',d:'shutdown GigabitEthernet0/0: '+MGMT_REASON},
+    {t:'ok',title:'Applied and verified',at:'2026-10-11 21:45:10',by:'admin',d:'all post-conditions hold'},
+    {t:'info',title:'Snapshot #2 taken',at:'2026-10-11 21:45:09',by:'admin',d:'snapshot 2'},
+    {t:'info',title:'Device enrolled',at:'2026-10-11 21:29:51',by:'admin',d:'host key pinned SHA256:ISaSsy4B…MqsM'},
+  ],
+  blocks:[],
+  loc:'401', alias:'sw1', note:'', devMenu:false,
+  sessions:[
+    {id:1,user:'non',device:'Tablet · Android 15',ip:'192.168.1.120',since:'2026-11-02 11:30',last:'ตอนนี้',me:true},
+    {id:2,user:'non',device:'Android · Pixel 7',ip:'192.168.1.142',since:'2026-10-30 09:12',last:'3 วันก่อน'},
+    {id:3,user:'aom',device:'Android · Galaxy A54',ip:'192.168.1.131',since:'2026-11-02 10:05',last:'2 นาทีที่แล้ว',job:'กำลัง Dry-Run บน s1'},
+    {id:4,user:'admin',device:'Android · Galaxy Tab S9',ip:'192.168.1.118',since:'2026-11-01 16:40',last:'เมื่อวาน'},
+  ],
+  extraDevices:[], follow:true, auditQ:'', auditSearch:false, userMenu:null,
+  users:[
+    {name:'admin',role:'ADMIN',active:true,since:'2026-10-11'},
+    {name:'non',role:'ADMIN',active:true,since:'2026-10-11'},
+    {name:'aom',role:'OPERATOR',active:true,since:'2026-10-11'},
+  ],
+  audit:[
+    {at:'02/11/2026 11:31',user:'non',target:'app',cmd:'auth.restore: remembered session from 2026-11-02T04:30:00.005401Z',ok:true},
+    {at:'02/11/2026 11:30',user:'non',target:'app',cmd:'auth.login: role admin',ok:true},
+    {at:'12/10/2026 20:19',user:'non',target:'app',cmd:'auth.restore: remembered session from 2026-10-11T16:00:47.996802Z',ok:true},
+    {at:'11/10/2026 23:01',user:'non',target:'http://192.168.1.133:8000',cmd:'server.link: server user myuser (operator)',ok:true},
+    {at:'11/10/2026 23:00',user:'non',target:'app',cmd:'user.create: aom (OPERATOR)',ok:true},
+    {at:'11/10/2026 22:23',user:'non',target:'s1 (192.168.1.50)',cmd:'change.apply: vlan 300 / name VLAN0300 — all post-conditions hold',ok:true},
+    {at:'11/10/2026 21:46',user:'admin',target:'s1 (192.168.1.50)',cmd:'change.reject: shutdown GigabitEthernet0/2 — carries the management session',ok:false},
+    {at:'11/10/2026 21:29',user:'admin',target:'s1 (192.168.1.50)',cmd:'device.enroll: host key SHA256:ISaSsy4B…MqsM pinned',ok:true},
+  ],
+  ssh:[],
+  console:[
+    '[22:23:10] lock acquired by non@tablet-01 (job #41)','[22:23:10] snapshot #4 stored (running-config, 3.2 KB, secrets masked)',
+    '[22:23:11] ssh s1: configure terminal / vlan 300 / name VLAN0300 / end','[22:23:11] verify: vlan 300 present, name ok → all post-conditions hold','[22:23:12] lock released (job #41)',
+  ],
+};
+
+/* ===================== HELPERS ===================== */
+const TAG={
+  MGMT:{c:'border-red-300 text-red-600 bg-red-50',i:'ph-prohibit',l:'MGMT PATH'},
+  UPLINK:{c:'border-orange-300 text-orange-700 bg-orange-50',i:'ph-shield',l:'UPLINK'},
+  UNKNOWN:{c:'border-orange-300 text-orange-700 bg-orange-50',i:'ph-question',l:'UNKNOWN'},
+};
+const badge=(tag,sz='text-[11px]')=>tag?`<span class="${sz} border ${TAG[tag].c} px-2 py-0.5 rounded-md font-semibold inline-flex items-center gap-1 whitespace-nowrap"><i class="ph-bold ${TAG[tag].i}"></i>${TAG[tag].l}</span>`:'';
+const vlanName=id=>(S.vlans.find(v=>v.id===id)||{}).name;
+const isAdmin=()=>S.role==='admin';
+function go(v){S.view=v;S.menu=false;S.sheet=false;render(true)}
+function snack(msg,kind='ok'){S.snack={msg,kind};render();clearTimeout(window._sn);window._sn=setTimeout(()=>{S.snack=null;render()},2600)}
+function closeModal(){S.modal=null;render()}
+function seg(opts,cur,fn){return `<div class="flex rounded-full border border-gray-400 overflow-hidden">${opts.map(([v,l],i)=>`<button onclick="${fn}('${v}')" class="flex-1 py-2.5 px-4 text-sm flex items-center justify-center gap-2 ${i?'border-l border-gray-400':''} ${cur===v?'bg-indigo-100 text-gray-900':'bg-white hover:bg-gray-50'}">${cur===v?'<i class="ph-bold ph-check"></i>':''}${l}</button>`).join('')}</div>`}
+const input=(key,ph,type='text')=>`<input type="${type}" value="${esc(S.form[key])}" oninput="S.form.${key}=this.value" placeholder="${ph}" class="w-full border border-[#EDE6D3] rounded-2xl px-5 py-4 text-base placeholder-gray-500 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary">`;
+const backBtn=(fn,label='ย้อนกลับ')=>`<button onclick="${fn}" class="flex items-center gap-1 text-gray-500 hover:text-gray-800 text-[15px]"><i class="ph ph-caret-left"></i>${label}</button>`;
+const serverWarn=()=>S.serverOnline?'':`<p class="text-red-600 text-sm flex items-center gap-1.5 mb-6"><span>⚠️</span>ติดต่อ NetOps Server ไม่ได้ — Apply จะถูกปฏิเสธ (Fail-closed)</p>`;
+
+/* ===================== VIEWS ===================== */
+const V={};
+
+V.login=()=>`
+<div class="flex-1 flex items-center justify-center p-6">
+  <div class="w-full max-w-md text-center">
+    <h1 class="text-5xl font-bold mb-2">NetScan</h1>
+    <p class="text-gray-500 mb-10">EVE-NG Switch Automation</p>
+    <div class="bg-white rounded-2xl p-8 border border-gray-100 text-left">
+      <h2 class="text-2xl font-bold">เข้าสู่ระบบ</h2>
+      <p class="text-sm text-gray-400 mb-6">ระบบจะจำการเข้าสู่ระบบไว้ 7 วัน</p>
+      <div class="relative mb-5"><label class="absolute -top-2.5 left-4 bg-white px-1 text-xs text-gray-500">Username</label>
+        <input id="lu" value="${esc(S.user)}" class="w-full border border-gray-200 rounded-xl px-4 py-4 focus:outline-none focus:border-primary"></div>
+      <div class="relative mb-2"><label class="absolute -top-2.5 left-4 bg-white px-1 text-xs text-primary">Password</label>
+        <input id="lp" type="password" value="password12" class="w-full border border-primary rounded-xl px-4 py-4 pr-12 focus:outline-none" onkeydown="if(event.key==='Enter')login()">
+        <button onclick="const p=$('lp');p.type=p.type==='password'?'text':'password'" class="absolute right-4 top-4 text-gray-500 text-xl"><i class="ph ph-eye"></i></button></div>
+      <p id="lerr" class="text-xs text-red-600 h-5"></p>
+      <button onclick="login()" class="w-full bg-primary hover:bg-blue-700 text-white font-medium rounded-xl py-4 transition">เข้าสู่ระบบ</button>
+    </div>
+  </div>
+</div>`;
+
+V.dashboard=()=>{
+  const on=S.deviceOnline, srv=S.serverOnline;
+  return `
+<header class="flex justify-between items-center px-8 pt-6 pb-5">
+  <h1 class="text-4xl font-bold">NetScan</h1>
+  <div class="flex items-center gap-2 relative">
+    <span class="px-5 py-2 rounded-full bg-black/[.04] font-medium">${isAdmin()?'Admin':'Operator'}</span>
+    <button onclick="S.menu=!S.menu;render()" class="w-11 h-11 grid place-items-center rounded-full hover:bg-black/5"><i class="ph-bold ph-dots-three-vertical text-2xl"></i></button>
+    ${S.menu?menuHtml():''}
+  </div>
+</header>
+<div class="px-8 space-y-5 flex-1">
+  <div class="grid grid-cols-2 gap-5">
+    <div class="bg-white p-6 rounded-2xl border border-gray-100">
+      <p class="text-gray-500 mb-1">สวิตช์ทั้งหมด</p>
+      <p class="text-4xl font-bold">${(S.sw1Removed?0:1)+S.extraDevices.length} <span class="text-lg font-normal">เครื่อง</span></p>
+      <p class="font-medium mt-2 flex items-center gap-4"><span class="text-green-600 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500"></span>Online ${on?1:0}</span><span class="text-red-500 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500"></span>Offline ${(on||S.sw1Removed?0:1)+S.extraDevices.length}</span></p>
+    </div>
+    <div class="bg-white p-6 rounded-2xl border border-gray-100">
+      <p class="text-gray-500 mb-1">พอร์ตใช้งาน</p>
+      <p class="text-4xl font-bold">${S.ports.filter(p=>p.up&&p.admin).length}<span class="text-xl text-gray-400 font-normal">/8</span></p>
+      <p class="text-primary font-semibold mt-2">Usage ${Math.round(S.ports.filter(p=>p.up&&p.admin).length/8*100)}%</p>
+    </div>
+  </div>
+  <div class="bg-white rounded-2xl border border-gray-100 p-6">
+    <button onclick="go('netops')" class="w-full flex items-center gap-3 text-left">
+      <span class="w-3 h-3 rounded-full ${srv?'bg-green-500':'bg-orange-400'}"></span>
+      <div class="flex-1 min-w-0"><p class="text-lg font-bold">NetOps Server: ${srv?'เชื่อมต่อแล้ว':'ติดต่อไม่ได้'}</p>
+        <p class="text-sm text-gray-400 truncate">${srv?'Global Lock ว่าง · Telegram Guard เปิดอยู่':'ติดต่อ NetOps Server ไม่ได้: HTTP connection timed out after 0:00:08.000000, host: 192.168.1.133, port: 8000'}</p></div>
+      <i class="ph ph-caret-right text-xl text-gray-500"></i>
+    </button>
+    <button onclick="go('editor')" class="mt-4 w-full bg-primary hover:bg-blue-700 text-white rounded-2xl py-4 text-lg font-semibold">🧩 Block Editor (VLAN / Port)</button>
+  </div>
+  <h3 class="font-bold text-lg pt-2">รายการอุปกรณ์ล่าสุด</h3>
+  ${S.sw1Removed?(S.extraDevices.length?'':`<div class="bg-white p-8 rounded-2xl border border-dashed border-gray-300 text-center text-gray-500">ยังไม่มีอุปกรณ์ · <button onclick="go('devices')" class="text-primary">เพิ่มอุปกรณ์</button> · <button onclick="restoreSw1()" class="text-primary">กู้ sw1 (เดโม)</button></div>`):`<button onclick="go('ports')" class="w-full bg-white p-6 rounded-2xl border border-gray-100 flex justify-between items-center hover:bg-gray-50 text-left">
+    <div><p class="font-bold text-xl">${esc(S.alias)}</p><p class="text-gray-500">192.168.1.50 • ${esc(S.loc)}</p></div>
+    <span class="w-3 h-3 rounded-full ${on?'bg-green-500':'bg-red-500'}"></span>
+  </button>`}
+  ${S.extraDevices.map(d=>`<button onclick="snack('${esc(d.name)}: ยังไม่ได้ยืนยัน host key — sync จากหน้าจัดการอุปกรณ์','info')" class="w-full bg-white p-6 rounded-2xl border border-gray-100 flex justify-between items-center hover:bg-gray-50 text-left">
+    <div><p class="font-bold text-xl">${esc(d.name)}</p><p class="text-gray-500">${esc(d.ip)} • ${esc(d.loc||'-')}</p></div><span class="w-3 h-3 rounded-full bg-red-500"></span></button>`).join('')}
+</div>
+<div class="p-6 sticky bottom-0 bg-appBg">
+  <button onclick="go('qr')" class="w-full bg-[#1f1f1f] text-white rounded-2xl py-5 text-lg font-semibold">📷 สแกน QR Code หน้าตู้</button>
+</div>`;
+};
+
+function menuHtml(){
+  const item=(fn,ic,l)=>`<button onclick="${fn}" class="w-full flex items-center gap-5 px-5 py-3.5 text-[17px] hover:bg-gray-100 active:bg-gray-200 text-left"><i class="ph ${ic} text-2xl text-gray-600"></i><span class="flex-1">${l}</span></button>`;
+  return `<div class="fixed inset-0 z-20" onclick="S.menu=false;render()"></div>
+  <div class="absolute -right-8 -top-5 z-30 bg-white rounded-md shadow-2xl w-72 py-2 pop">
+    <p class="px-5 py-3 text-gray-500">ผู้ใช้: ${esc(S.user)}</p>
+    ${item("S.menu=false;syncDevice(true)",'ph-arrows-clockwise','ตรวจสถานะทุกเครื่อง')}
+    ${item("go('devices')",'ph-hard-drives','จัดการอุปกรณ์')}
+    ${item("go('editor')",'ph-rows','Block Editor')}
+    ${item("go('netops')",'ph-graph','NetOps Server')}
+    ${item("go('audit')",'ph-receipt','Audit Trail Log')}
+    ${item("go('ssh')",'ph-terminal-window','SSH Console')}
+    ${item("go('users')",'ph-users','จัดการผู้ใช้')}
+    ${item("S.menu=false;S.form={};S.modal={type:'password'};render()",'ph-password','เปลี่ยนรหัสผ่าน')}
+    ${item("logout()",'ph-sign-out','ออกจากระบบ')}
+  </div>`;
+}
+
+V.qr=()=>`
+<div class="flex-1 bg-black text-white flex flex-col">
+  <div class="flex justify-between items-center p-6">${backBtn("go('dashboard')").replace('text-gray-500 hover:text-gray-800','text-white/80')}<span class="font-semibold">สแกน QR Code หน้าตู้</span><i class="ph ph-lightning text-2xl"></i></div>
+  <div class="flex-1 grid place-items-center">
+    <div class="relative w-72 h-72">
+      <div class="absolute inset-0 border-2 border-white/20 rounded-3xl"></div>
+      ${['top-0 left-0 border-t-4 border-l-4 rounded-tl-3xl','top-0 right-0 border-t-4 border-r-4 rounded-tr-3xl','bottom-0 left-0 border-b-4 border-l-4 rounded-bl-3xl','bottom-0 right-0 border-b-4 border-r-4 rounded-br-3xl'].map(c=>`<div class="absolute w-12 h-12 border-blue-400 ${c}"></div>`).join('')}
+      <div class="scanline absolute left-4 right-4 h-0.5 bg-blue-400 shadow-[0_0_12px_#60a5fa]"></div>
+    </div>
+  </div>
+  <p class="text-center text-white/70 mb-4">เล็ง QR ที่ติดหน้าตู้ Rack · ระบบจะตรวจ host key ก่อนเปิดอุปกรณ์</p>
+  <div class="p-6"><button onclick="snack('พบ sw1 · host key ตรงกับที่ลงทะเบียน');go('ports')" class="w-full bg-white text-black rounded-2xl py-4 font-semibold">จำลองการสแกน: sw1 (ตู้ ${esc(S.loc)})</button></div>
+</div>`;
+
+V.ports=()=>{
+  const p=S.ports[S.selPort], on=S.deviceOnline;
+  const cards=S.ports.map((q,i)=>{
+    const sel=i===S.selPort;
+    const cls=sel?'bg-gray-900 text-white':!q.admin?'bg-gray-200 text-gray-500':q.up?'bg-[#D1FAE5] text-green-800':'bg-red-50 text-red-700';
+    return `<button onclick="S.selPort=${i};render()" class="${cls} rounded-2xl h-28 relative grid place-items-center transition hover:brightness-95">
+      ${q.tag?`<i class="ph-fill ph-lock-key text-sm absolute top-2.5 right-3 ${sel?'text-gray-300':'text-green-700'}"></i>`:''}
+      <span class="text-xl font-bold">${pad(i+1)}</span><span class="absolute bottom-2 left-3 text-[11px] opacity-70">${q.n}${!q.admin?' · shut':q.errdis?' · err-dis':q.ch?' · Po'+q.ch:q.mode==='trunk'?' · trunk':''}</span></button>`}).join('');
+  const st=!p.admin?'<span class="text-gray-500 font-medium">Administratively Down</span>':p.errdis?`<span class="text-red-600 font-medium">err-disabled (${p.errdis})</span>`:p.up?'<span class="text-green-600 font-medium">Link Up</span>':'<span class="text-red-600 font-medium">Link Down</span>';
+  let warn=p.errdis?`<div class="bg-red-50 rounded-xl border border-red-200 p-4 mt-4 flex gap-3 text-red-700"><i class="ph-bold ph-warning-octagon text-lg mt-0.5"></i><div><p class="font-semibold">พอร์ตถูกปิดอัตโนมัติ (err-disabled)</p><p class="text-sm text-red-600/80">สาเหตุ: ${p.errdis} · กู้ได้ที่ Block Editor › กู้พอร์ต err-disabled หรือเปิด Errdisable Recovery</p></div></div>`:'';
+  if(p.tag==='MGMT')warn=`<div class="bg-red-50 rounded-xl border border-red-200 p-4 mt-4 flex gap-3 text-red-700"><i class="ph-bold ph-warning text-lg mt-0.5"></i><div><p class="font-semibold">พอร์ตนี้ถูกล็อก (ทุกคน)</p><p class="text-sm text-red-600/80">${MGMT_REASON}<br>หลักฐาน: ${p.ev}</p></div></div>`;
+  if(p.tag==='UPLINK')warn=`<div class="bg-orange-50 rounded-xl border border-orange-200 p-4 mt-4 flex gap-3 text-orange-800"><i class="ph-bold ph-shield-warning text-lg mt-0.5"></i><div><p class="font-semibold">PROTECTED uplink — Admin เท่านั้น</p><p class="text-sm opacity-80">หลักฐาน: ${p.ev} · ต้องพิมพ์ชื่ออุปกรณ์ยืนยันตอน Apply</p></div></div>`;
+  return `
+<header class="flex justify-between items-center px-8 pt-6 pb-3">
+  ${backBtn("go('dashboard')")}
+  <h1 class="font-bold text-lg">สถานะพอร์ต</h1>
+  <div class="flex gap-4 text-2xl"><button onclick="S.modal={type:'legend'};render()"><i class="ph ph-info"></i></button><button onclick="S.tab='overview';go('device')"><i class="ph ph-gear"></i></button></div>
+</header>
+<div class="px-8 pb-6 flex-1">
+  <div class="flex justify-between items-center mt-2"><h2 class="text-3xl font-bold">sw1</h2><span class="font-medium ${on?'text-green-600':'text-red-500'}">${on?'Online':'Offline'}</span></div>
+  <div class="flex justify-between items-center mt-3 text-gray-600"><span>📍 ${esc(S.loc)} (192.168.1.50)</span><button onclick="openEditDevice()"><i class="ph ph-pencil-simple text-xl"></i></button></div>
+  ${unsavedBar()}
+  <p class="text-sm text-gray-500 mt-2">s1 · IOSv · IOS 15.0(TTC_20140605)FLO_DSGS7 · ตรวจล่าสุด ${S.lastVerified}</p>
+  ${on?'':`<div class="mt-4 bg-[#F3E7DA] border border-[#E8B98C] rounded-2xl p-5 flex gap-4">
+    <i class="ph ph-warning text-3xl text-orange-700"></i>
+    <div class="flex-1"><p class="font-semibold text-orange-700">อ่านสถานะล่าสุดไม่สำเร็จ</p><p class="text-gray-800">มือถือไม่มีเส้นทางไปยัง 192.168.1.50 ตรวจสอบการเชื่อมต่อ Wi-Fi และว่า IP/subnet ของมือถือกับสวิตช์อยู่วงเดียวกัน<br>ข้อมูลด้านล่างเป็นค่าที่อ่านได้ครั้งก่อน</p></div>
+    <button onclick="syncDevice()" class="self-center px-4 py-2 rounded-xl border border-orange-300 text-orange-800 font-medium bg-white/60 whitespace-nowrap">${S.syncing?'<i class="ph ph-spinner spin"></i>':'ลองใหม่'}</button></div>`}
+  <div class="flex justify-between items-center mt-7 mb-4"><h3 class="text-xl font-bold">สถานะพอร์ต Real-time</h3>
+    <span class="text-sm font-semibold flex items-center gap-1.5 ${on?'text-green-600':'text-gray-400'}"><span class="w-2 h-2 rounded-full ${on?'bg-green-500':'bg-gray-400'}"></span>${on?'Live 30s':'Cached'}</span></div>
+  <div class="grid grid-cols-4 gap-3">${cards}</div>
+  <p class="text-sm text-gray-500 mt-3">Link Up ${S.ports.filter(q=>q.up&&q.admin).length} / 8 พอร์ต · อัปเดต ${S.lastVerified.slice(11)} · 🔒 = พอร์ตที่ถูกป้องกัน</p>
+  <div class="bg-white rounded-2xl border border-gray-200 p-6 mt-5">
+    <div class="flex justify-between items-start"><h3 class="text-blue-600 font-semibold text-lg">พอร์ตที่เลือก: Port ${p.n.slice(2)} <span class="text-gray-500 font-normal">${p.n}</span></h3>${badge(p.tag)}</div>
+    <ul class="mt-2 space-y-1"><li>• Status: ${st}</li><li>• ${p.mode==='trunk'?`Trunk: <b>native ${p.native} · allowed ${p.allowed?fmtList(p.allowed):'all'}</b>`:`VLAN: <b>VLAN ${p.vlan} (${esc(vlanName(p.vlan)||'?')})</b>${p.voice!=null?` · voice ${p.voice}`:''}`}</li><li>• Mode: ${p.mode}${p.ch?` · Port-channel${p.ch}`:''}</li>${p.desc?`<li>• Description: ${esc(p.desc)}</li>`:''}${p.ps?`<li>• Port Security: max ${p.ps.max} · ${p.ps.viol}${p.ps.sticky?' · sticky':''}</li>`:''}<li>• Speed: ${p.up&&p.admin?'Auto (1000Mb/s, Full)':'Auto (ยังไม่มี link)'}</li></ul>
+    ${warn}
+  </div>
+</div>
+<div class="p-6 sticky bottom-0 bg-appBg">
+  <button ${on?'onclick="openConfig()"':'disabled'} class="w-full rounded-2xl py-4 text-lg font-semibold flex justify-center items-center gap-2 ${on?'bg-primary hover:bg-blue-700 text-white':'bg-[#AEBFEA] text-white cursor-not-allowed'}">⚙️ ตั้งค่าพอร์ตนี้ (Quick Config)</button>
+  ${on?'':'<p class="text-center text-xs text-gray-500 mt-2">ต้องเข้าถึงสวิตช์ได้ก่อน — การเปลี่ยนแปลงใช้ live state เสมอ</p>'}
+</div>`;
+};
+
+V.config=()=>{
+  const p=S.ports[S.selPort], c=S.cfg;
+  const lockedReason=p.tag==='MGMT'?MGMT_REASON:(p.tag==='UPLINK'&&!isAdmin())?'PROTECTED uplink: ADMIN confirmation required — บัญชี Operator แก้ไขไม่ได้':p.mode==='trunk'?'พอร์ตนี้เป็น trunk — Quick Config เปลี่ยนได้เฉพาะพอร์ต access (ใช้ Block Editor › Trunk)':p.ch?`พอร์ตอยู่ใน Port-channel${p.ch} — ตั้งค่าที่ Port-channel แทน`:null;
+  const changed=c.vlan!==p.vlan||c.admin!==p.admin;
+  const vopts=S.vlans.filter(v=>!RESERVED.includes(v.id)||v.id===1).map(v=>`<option value="${v.id}" ${v.id===c.vlan?'selected':''}>VLAN ${v.id} - ${esc(v.name)}</option>`).join('');
+  const dis=lockedReason?'disabled':'';
+  const audit=S.history.filter(h=>h.port===p.n);
+  return `
+<header class="flex items-center justify-between px-8 py-4 bg-white border-b border-gray-200">
+  ${backBtn("go('ports')")}<h1 class="font-semibold text-lg">ตั้งค่าพอร์ต</h1><span class="w-20"></span>
+</header>
+<div class="p-8 flex-1 max-w-3xl w-full mx-auto">
+  <div class="flex justify-between items-start mb-5">
+    <div><h2 class="font-bold text-2xl flex items-center gap-2"><i class="ph-bold ph-gear text-blue-500"></i>ตั้งค่า Port ${p.n.slice(2)}</h2>
+    <p class="text-gray-500 mt-1">${p.n} · sw1 · ${p.admin?(p.up?'Link Up':'Link Down'):'Admin Down'}</p></div>
+    <div class="flex items-center gap-2">${badge(p.tag)}<span class="text-sm font-medium ${p.admin?'text-green-600':'text-gray-500'}">● ${p.admin?'Enable':'Disable'}</span></div>
+  </div>
+  ${lockedReason?`<div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex gap-3 text-red-700"><i class="ph-bold ph-warning text-lg mt-0.5"></i><div><p class="font-semibold">แก้ไขพอร์ตนี้ไม่ได้</p><p class="text-sm text-red-600/80">${lockedReason}</p></div></div>`:
+   p.tag==='UPLINK'?`<div class="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 flex gap-3 text-orange-800"><i class="ph-bold ph-shield-warning text-lg mt-0.5"></i><div><p class="font-semibold">PROTECTED uplink</p><p class="text-sm opacity-80">ระบบจะให้พิมพ์ hostname (s1) ยืนยันก่อน Apply</p></div></div>`:''}
+  <div class="space-y-6 ${lockedReason?'opacity-60':''}">
+    <div><label class="block font-semibold mb-2">เลือก VLAN</label>
+      <select ${dis} onchange="S.cfg.vlan=+this.value;render()" class="w-full bg-white border border-gray-200 rounded-xl p-4 disabled:bg-gray-100">${vopts}</select></div>
+    <div><label class="block font-semibold mb-2">สถานะการทำงาน</label>
+      <div class="grid grid-cols-2 gap-3">
+        <button ${dis} onclick="S.cfg.admin=true;render()" class="rounded-xl py-3.5 font-medium flex justify-center items-center gap-2 border ${c.admin?'bg-green-50 border-green-300 text-green-700':'bg-white border-gray-200 text-gray-500'}"><span class="w-2 h-2 rounded-full ${c.admin?'bg-green-500':'bg-gray-300'}"></span>Enable</button>
+        <button ${dis} onclick="S.cfg.admin=false;render()" class="rounded-xl py-3.5 font-medium flex justify-center items-center gap-2 border ${!c.admin?'bg-red-50 border-red-300 text-red-700':'bg-white border-gray-200 text-gray-500'}"><span class="w-2 h-2 rounded-full ${!c.admin?'bg-red-500':'bg-gray-300'}"></span>Disable</button>
+      </div></div>
+    <div>
+      <button ${!lockedReason&&changed?'onclick="quickDryRun()"':'disabled'} class="w-full rounded-xl py-4 font-semibold flex justify-center items-center gap-2 ${!lockedReason&&changed?'bg-primary hover:bg-blue-700 text-white':'bg-[#A5B4FC] text-white cursor-not-allowed'}">
+        <i class="ph-fill ${lockedReason?'ph-lock-key':'ph-magnifying-glass'}"></i>${lockedReason?'ยืนยันคำสั่ง (SSH Command)':'Dry-Run แล้วยืนยันคำสั่ง (SSH Command)'}</button>
+      <p class="text-xs text-gray-500 text-center mt-2">${lockedReason?'พอร์ตนี้ถูกป้องกัน':changed?'จะแสดงคำสั่ง CLI และคำสั่ง Rollback ก่อนส่งจริง':'ยังไม่มีการเปลี่ยนแปลง เลือก VLAN หรือสถานะใหม่ก่อน'}</p>
+    </div>
+  </div>
+  <hr class="my-8 border-gray-200">
+  <h3 class="font-semibold mb-4">ประวัติการสั่งการ (Audit Trail)</h3>
+  <div class="space-y-4">${audit.length?audit.map(h=>`<div class="border-l-2 ${h.t==='rej'?'border-red-300':h.t==='ok'?'border-green-400':'border-gray-300'} pl-4">
+    <p class="text-xs text-gray-400 mb-1">${h.at} · ${h.by}</p>
+    <p class="text-sm text-gray-700 bg-white p-3 rounded-lg border border-gray-100">${esc(h.d)} ${h.t==='rej'?'<span class="text-red-500 font-semibold">(ถูกปฏิเสธ)</span>':h.t==='ok'?'<span class="text-green-600 font-semibold">(สำเร็จ)</span>':h.t==='warn'?'<span class="text-orange-600 font-semibold">(Rollback)</span>':''}</p></div>`).join(''):'<p class="text-sm text-gray-400">ยังไม่มีประวัติของพอร์ตนี้</p>'}</div>
+</div>`;
+};
+
+V.device=()=>{
+  const tabs=[['overview','Overview'],['vlans','VLANs'],['interfaces','Interfaces'],['diag','Diagnostics'],['history','History']];
+  return `
+<header class="flex items-center px-6 pt-4 pb-2 gap-6">
+  <button onclick="go('ports')" class="text-3xl"><i class="ph ph-arrow-left"></i></button>
+  <h1 class="text-3xl flex-1">${esc(S.alias)}${S.alias!=="sw1"?'<span class="text-base text-gray-400 ml-3">s1</span>':''}</h1>
+  <button onclick="syncDevice()" class="text-3xl" title="Sync"><i class="ph ph-arrows-clockwise ${S.syncing?'spin':''}"></i></button>
+  <div class="relative"><button onclick="S.devMenu=!S.devMenu;render()" class="text-3xl"><i class="ph-bold ph-dots-three-vertical"></i></button>${S.devMenu?devMenuHtml():''}</div>
+</header>
+<nav class="flex shrink-0 gap-1 px-6 sm:px-20 border-b border-gray-300 overflow-x-auto">${tabs.map(([k,l])=>`<button onclick="S.tab='${k}';render(true)" class="px-4 py-3 text-lg relative ${S.tab===k?'text-blue-600':'text-gray-500'}">${l}${S.tab===k?'<span class="absolute left-4 right-4 -bottom-px h-1 bg-blue-600 rounded-t"></span>':''}</button>`).join('')}</nav>
+<div class="flex-1">${({overview:tOverview,vlans:tVlans,interfaces:tIfaces,diag:tDiag,history:tHistory})[S.tab]()}</div>`;
+};
+
+function devMenuHtml(){
+  const ad=isAdmin();
+  const it=(fn,ic,l,{red=false,admin=false,hint=''}={})=>{const dis=admin&&!ad;return `<button ${dis?'disabled':`onclick="S.devMenu=false;${fn}"`} class="w-full flex items-center gap-4 px-5 py-3 text-left text-base ${dis?'text-gray-300':red?'text-red-600 hover:bg-red-50':'hover:bg-gray-50'}"><i class="ph ${ic} text-xl ${dis?'':red?'':'text-gray-600'}"></i><span class="flex-1">${l}</span>${dis?'<span class="text-[10px] border border-gray-200 rounded px-1.5">ADMIN</span>':hint}</button>`};
+  return `<div class="fixed inset-0 z-20" onclick="S.devMenu=false;render()"></div>
+  <div class="absolute right-0 top-11 z-30 bg-white rounded-lg shadow-2xl w-80 py-2 pop">
+    <p class="px-5 py-2 text-sm text-gray-500">sw1 · s1 · 192.168.1.50</p>
+    ${it("syncDevice()",'ph-arrows-clockwise','อ่าน live state ใหม่ (Sync)')}
+    ${it("openEditDevice()",'ph-pencil-simple','แก้ไขชื่อเรียก / ตำแหน่งตู้')}
+    ${it("go('editor')",'ph-rows','เปิดใน Block Editor')}
+    ${it("go('ssh')",'ph-terminal-window','SSH Console ของอุปกรณ์นี้')}
+    ${it("S.auditQ='s1';S.auditSearch=true;go('audit')",'ph-receipt','Audit log ของอุปกรณ์นี้')}
+    ${it("S.modal={type:'qr'};render()",'ph-qr-code','QR Code สำหรับติดหน้าตู้')}
+    <div class="border-t my-1"></div>
+    ${it("S.form={user:'netops'};S.modal={type:'creds'};render()",'ph-key','เปลี่ยน SSH credentials',{admin:true})}
+    ${it("rekey()",'ph-fingerprint','ตรวจ / ยืนยัน host key ใหม่',{admin:true})}
+    ${it("go('actions')",'ph-power','Device Actions (บันทึก / รีโหลด / ย้อนคอนฟิก)')}
+    <div class="border-t my-1"></div>
+    ${it("S.form={};S.modal={type:'delDevice'};render()",'ph-trash','ลบอุปกรณ์',{red:true,admin:true})}
+  </div>`;
+}
+
+const portLine=p=>`${p.mode}${p.mode==='trunk'?` · native ${p.native} · allowed ${p.allowed?fmtList(p.allowed):'all'}`:` · vlan ${p.vlan}${p.voice!=null?` · voice ${p.voice}`:''}`} · admin ${p.admin?'up':'down'}${p.errdis?` · err-disabled (${p.errdis})`:p.admin&&!p.up?' · link down':''}`;
+const chip=(t,c='bg-gray-100 text-gray-600')=>`<span class="text-xs rounded-full px-2.5 py-0.5 ${c}">${t}</span>`;
+const portChips=p=>[p.desc?chip('“'+esc(p.desc)+'”','bg-sky-50 text-sky-700'):'',p.ch?chip('Port-channel'+p.ch,'bg-violet-50 text-violet-700'):'',p.ps?chip(`port-security max ${p.ps.max} · ${p.ps.viol}${p.ps.sticky?' · sticky':''}`,'bg-rose-50 text-rose-700'):'',p.portfast?chip('portfast'):'',p.bpdu?chip('bpduguard'):'',p.speed!=='auto'||p.duplex!=='auto'?chip(`${p.speed}/${p.duplex}`):''].join(' ');
+const unsavedBar=()=>S.unsaved.length?`<button onclick="go('actions')" class="w-full mt-4 bg-orange-50 border border-orange-200 rounded-2xl p-4 flex items-center gap-3 text-left text-orange-800"><i class="ph ph-floppy-disk text-2xl"></i><span class="flex-1"><b>${S.unsaved.length} การเปลี่ยนแปลงยังไม่ได้บันทึกถาวร</b> — ถ้าสวิตช์รีบูตจะหายไป</span><span class="font-semibold">บันทึก ›</span></button>`:'';
+function tOverview(){
+  const on=S.deviceOnline, c=t=>S.ports.filter(p=>p.tag===t).length;
+  const row=(k,v)=>`<div class="grid grid-cols-[240px_1fr] py-2"><span class="text-gray-600">${k}</span><span class="text-lg">${v}</span></div>`;
+  return `<div class="p-6">
+  <div class="flex items-center gap-3 mb-4"><span class="text-lg">SSH session:</span>
+    <span class="px-4 py-1.5 rounded-lg border font-medium flex items-center gap-2 ${on?'border-green-400 text-green-700':'border-orange-400 text-orange-700'}"><i class="ph ${on?'ph-check-circle':'ph-warning'}"></i>${on?'Connected':'Failed'}</span></div>
+  ${on?'':`<div class="bg-[#F3E7DA] border border-[#E8B98C] rounded-2xl p-5 flex gap-4 mb-6"><i class="ph ph-warning text-3xl text-orange-700"></i><div><p class="font-semibold text-orange-700">Failed</p><p>DeviceUnreachableException: มือถือไม่มีเส้นทางไปยัง 192.168.1.50 ตรวจสอบการเชื่อมต่อ Wi-Fi และว่า IP/subnet ของมือถือกับสวิตช์อยู่วงเดียวกัน</p></div></div>`}
+  <h3 class="text-2xl mb-2">Verified identity</h3>
+  ${row('Hostname','s1')}${row('Management IP','192.168.1.50:22')}${row('SSH user','netops')}${row('Algorithms','ciscoLegacy')}
+  ${row('Host key','<span class="font-mono text-base">SHA256:ISaSsy4B+6lzkZqDZjHIBuFLjFXjQlocrKhoZPxMqsM</span>')}${row('Model','IOSv')}${row('IOS','15.0(TTC_20140605)FLO_DSGS7')}
+  ${row('Enrolled','2026-10-11 21:29:51')}${row('Last verified',S.lastVerified)}${row('Credentials','******** (Android Keystore)')}
+  <h3 class="text-2xl mt-6 mb-3">Uplink protection ${on?'':'(cached)'}</h3>
+  <div class="flex flex-wrap gap-3">
+    <span class="px-4 py-2 rounded-lg border border-gray-300 text-gray-600">8 ports</span>
+    <span class="px-4 py-2 rounded-lg border border-red-300 text-red-600 font-semibold flex items-center gap-2"><i class="ph-bold ph-prohibit"></i>MGMT ${c('MGMT')}</span>
+    <span class="px-4 py-2 rounded-lg border border-orange-300 text-orange-700 font-semibold flex items-center gap-2"><i class="ph-bold ph-shield"></i>UPLINK ${c('UPLINK')}</span>
+    <span class="px-4 py-2 rounded-lg border border-orange-300 text-orange-700 font-semibold flex items-center gap-2"><i class="ph-bold ph-question"></i>UNKNOWN ${c('UNKNOWN')}</span>
+  </div>
+  <h3 class="text-2xl mt-6 mb-2">Layer 3</h3>
+  ${row('ip routing',S.ipRouting?'เปิด':'ปิด (สวิตช์ทำงานแบบ L2)')}${row('Default gateway',S.gw)}${row('SVI',S.svis.map(x=>`Vlan${x.vlan} ${x.ip}/${pfx(x.mask)}`).join(' · '))}${S.routes.length?row('Static routes',S.routes.length+' เส้นทาง'):''}${S.ospf.length?row('OSPF',[...new Set(S.ospf.map(o=>o.pid))].map(x=>'process '+x).join(', ')):''}${S.hsrp.length?row('HSRP',S.hsrp.length+' group'):''}${S.channels.length?row('EtherChannel',S.channels.map(c=>'Po'+c.g).join(', ')):''}
+  ${unsavedBar()}
+  <p class="text-lg mt-6">${on?'Live state อ่านล่าสุดเมื่อ '+S.lastVerified:'Tap sync to read live state and capabilities from the device.'}</p></div>`;
+}
+
+function tVlans(){
+  return `<div class="pb-28"><p class="px-6 py-4 text-sm">Cached ${S.lastVerified}. Changes always use live state.</p>
+  ${S.vlans.map(v=>{const r=RESERVED.includes(v.id);return `<div class="flex items-center gap-6 px-6 py-3">
+    <span class="w-16 h-16 rounded-full bg-indigo-100 grid place-items-center text-sm text-indigo-900 shrink-0">${v.id}</span>
+    <div class="flex-1"><p class="text-xl">${esc(v.name)}</p><p class="text-gray-500">${v.st} · ${S.ports.filter(p=>p.mode==='access'&&p.vlan===v.id).length} พอร์ต${(s=>s?` · SVI ${s.ip}/${pfx(s.mask)}${s.up?'':' (shutdown)'}`:'')(S.svis.find(x=>x.vlan===v.id))}${S.hsrp.filter(h=>h.vlan===v.id).map(h=>` · HSRP ${h.grp} → ${h.vip}`).join('')}</p></div>
+    ${r?'<i class="ph ph-lock-simple text-3xl text-gray-500"></i>':''}
+    <button ${r?'disabled':`onclick="openVlan('rename',${v.id})"`} class="text-3xl ${r?'text-gray-300':'text-gray-600'}"><i class="ph ph-pencil-simple"></i></button>
+    <button ${r?'disabled':`onclick="openVlan('delete',${v.id})"`} class="text-3xl ${r?'text-gray-300':'text-red-500'}"><i class="ph ph-trash"></i></button></div>`}).join('')}
+  <button onclick="openVlan('create')" class="fixed sm:absolute bottom-6 right-6 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 rounded-2xl px-6 py-4 shadow-lg text-lg flex items-center gap-3"><i class="ph ph-plus text-2xl"></i>Create VLAN</button></div>`;
+}
+
+function tIfaces(){
+  const list=S.ports.map((p,i)=>[p,i]).filter(([p])=>!S.protectedOnly||p.tag);
+  return `<div class="p-6">
+  <div class="flex flex-wrap items-center gap-3 mb-4">${badge('MGMT','text-sm')}<span>locked for everyone</span>${badge('UPLINK','text-sm')}${badge('UNKNOWN','text-sm')}<span>ADMIN only (UNKNOWN = PROTECTED)</span></div>
+  <div class="flex justify-between items-center mb-4"><span class="text-xl">Show only protected / UNKNOWN ports</span>
+    <button onclick="S.protectedOnly=!S.protectedOnly;render()" class="w-16 h-9 rounded-full border-2 relative ${S.protectedOnly?'bg-primary border-primary':'border-gray-500'}"><span class="absolute top-1 ${S.protectedOnly?'left-8 bg-white':'left-1 bg-gray-500'} w-6 h-6 rounded-full transition-all"></span></button></div>
+  <div class="space-y-4">${list.map(([p,i])=>{
+    const locked=p.tag==='MGMT', adminOnly=p.tag&&p.tag!=='MGMT', dis=locked||(adminOnly&&!isAdmin());
+    const btn=(fn,ic,l)=>`<button ${dis?'disabled':`onclick="${fn}"`} class="w-full py-4 rounded-2xl border text-xl font-medium flex justify-center items-center gap-3 ${dis?'text-gray-400 border-gray-200/60':'bg-white border-gray-200 hover:bg-gray-50'}"><i class="ph ${ic}"></i>${l}</button>`;
+    return `<div class="rounded-3xl border p-5 ${locked?'bg-gray-200/60 border-gray-200':'bg-white border-gray-200'}">
+      <div class="flex justify-between items-start"><p class="text-xl font-medium flex items-center gap-2"><span class="text-blue-600">‹··›</span>${longName(p.n)}</p>${badge(p.tag,'text-sm')}</div>
+      <p class="text-lg mt-1">${portLine(p)}</p>${portChips(p)?`<div class="flex flex-wrap gap-1.5 mt-1.5">${portChips(p)}</div>`:''}
+      ${p.ev?`<p class="text-gray-700">Evidence: ${p.ev}</p>`:''}
+      ${locked?`<p class="text-red-600 flex items-center gap-1.5"><i class="ph ph-lock-simple"></i>${MGMT_REASON}</p>`:adminOnly?`<p class="text-red-600 flex items-center gap-1.5"><i class="ph ph-shield-warning"></i>PROTECTED uplink: ADMIN confirmation required${isAdmin()?'':' (คุณเป็น Operator)'}</p>`:''}
+      <div class="mt-3 grid sm:grid-cols-3 gap-2">${btn(`openAccess(${i})`,'ph-arrows-left-right','Access VLAN')}${btn(`openIface(${i})`,'ph-plugs',p.admin?'Shutdown':'No shutdown')}${btn(`S.prefIface=${i};S.sheet=true;render()`,'ph-sliders-horizontal','ตั้งค่าอื่นๆ…')}</div></div>`}).join('')}</div></div>`;
+}
+
+const HICON={ok:['ph-check-circle','text-green-700'],info:['ph-info','text-blue-600'],rej:['ph-info','text-blue-600'],warn:['ph-arrow-counter-clockwise','text-orange-600'],err:['ph-x-circle','text-red-600']};
+function tHistory(){
+  return `<div class="p-6">
+  <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 flex gap-4"><i class="ph ph-info text-3xl text-blue-600"></i><div><p class="font-semibold text-blue-700 text-lg">How rollback works</p><p class="text-lg">Every change is verified after execution. If verification fails, the app sends the planned inverse commands and verifies the original state again. Nothing is saved to startup-config, so a reload also reverts. Snapshots below are the running config before each change (secrets masked).</p></div></div>
+  <h3 class="text-2xl mt-6 mb-3">Change history</h3>
+  <div class="space-y-5">${S.history.map(h=>`<div class="flex gap-5"><i class="ph ${HICON[h.t][0]} text-4xl ${HICON[h.t][1]}"></i><div><p class="text-xl">${h.title}</p><p class="text-gray-500">${h.at} · ${h.by}</p><p class="text-gray-500">${esc(h.d)}</p></div></div>`).join('')}</div></div>`;
+}
+
+V.editor=()=>{
+  const on=S.blocks.filter(b=>b.on).length;
+  return `
+<header class="flex justify-between items-center px-8 pt-6 pb-4">${backBtn("go('dashboard')")}<h1 class="font-bold text-xl">Block Editor</h1>
+  <button onclick="S.sheet=true;render()" class="text-3xl text-blue-700"><i class="ph ph-plus-square"></i></button></header>
+<div class="px-8 flex-1">
+  <div class="bg-white rounded-2xl border border-gray-100 px-6 py-5 flex justify-between items-center mb-4"><span class="text-xl">sw1 · s1 · 192.168.1.50</span><i class="ph-fill ph-caret-down"></i></div>
+  ${serverWarn()}
+  <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-xl">ชุดบล็อกคอนฟิก (${on}/${S.blocks.length} เปิดใช้งาน)</h3>
+    <button onclick="openAI()" class="flex items-center gap-2 text-lg text-gray-700 hover:text-primary"><i class="ph ph-sparkle text-2xl"></i>AI Assistant</button></div>
+  <div class="bg-white rounded-2xl border border-gray-100 p-6">
+    ${S.blocks.length?`<div class="space-y-3 mb-4">${S.blocks.map((b,i)=>blockCard(b,i)).join('')}</div>`:
+    `<div class="text-center py-4"><i class="ph ph-rows text-5xl text-gray-600"></i><p class="font-semibold mt-2">ยังไม่มีบล็อก</p><p class="text-gray-500">กด + เพื่อเพิ่ม VLAN / Access Port / เปิด-ปิดพอร์ต หรือให้ AI Assistant ร่างให้</p></div>`}
+    <button onclick="S.sheet=true;render()" class="w-full border border-gray-200 rounded-2xl py-4 text-lg font-semibold hover:bg-gray-50 mt-4">+ &nbsp;เพิ่มบล็อก</button>
+  </div>
+  <p class="text-gray-500 mt-4">Dry-Run อ่านสถานะจริงจากสวิตช์ ตรวจ Uplink/Management port แล้วแสดงคำสั่ง CLI และคำสั่ง Rollback ก่อนยืนยันเสมอ</p>
+</div>
+<div class="p-6 sticky bottom-0 bg-appBg">
+  <button ${on?'onclick="editorDryRun()"':'disabled'} class="w-full rounded-2xl py-4 text-lg font-semibold ${on?'bg-gray-900 text-white hover:bg-black':'bg-[#A8A8A0] text-white/90 cursor-not-allowed'}">🔍 Dry-Run บน s1</button>
+</div>`;
+};
+
+/* ===================== COMMAND CATALOG ===================== */
+const clone=o=>JSON.parse(JSON.stringify(o));
+const CONF=['ports','vlans','svis','gw','routes','hsrp','ospf','ipRouting','errRec','channels'];
+const confSnap=()=>{const o={};CONF.forEach(k=>o[k]=clone(S[k]));return o};
+const ipOk=s=>/^(\d{1,3})(\.\d{1,3}){3}$/.test(s||'')&&s.split('.').every(x=>+x<=255);
+const ip2n=s=>s.split('.').reduce((a,x)=>a*256+(+x),0);
+const n2ip=n=>[24,16,8,0].map(k=>(n>>>k)&255).join('.');
+const bits=s=>ip2n(s).toString(2).padStart(32,'0');
+const maskOk=s=>ipOk(s)&&/^1*0*$/.test(bits(s));
+const wildOk=s=>ipOk(s)&&/^0*1*$/.test(bits(s));
+const pfx=m=>(bits(m).match(/1/g)||[]).length;
+const pfx2mask=n=>n2ip(n?(0xFFFFFFFF<<(32-n))>>>0:0);
+const netOf=(ip,m)=>n2ip((ip2n(ip)&ip2n(m))>>>0);
+const inNet=(ip,net,m)=>netOf(ip,m)===netOf(net,m);
+const inWild=(ip,net,w)=>((ip2n(ip)&~ip2n(w))>>>0)===((ip2n(net)&~ip2n(w))>>>0);
+const parseList=s=>{const out=[];String(s||'').split(/[,\s]+/).filter(Boolean).forEach(x=>{const m=x.match(/^(\d+)-(\d+)$/);if(m){for(let i=+m[1];i<=+m[2]&&out.length<4094;i++)out.push(i)}else out.push(+x)});return [...new Set(out)].sort((a,b)=>a-b)};
+const fmtList=l=>{if(!l||!l.length)return 'none';const r=[];let a=l[0],b=l[0];for(const x of l.slice(1)){if(x===b+1)b=x;else{r.push(a===b?a:a+'-'+b);a=b=x}}r.push(a===b?a:a+'-'+b);return r.join(',')};
+const I=p=>`interface ${longName(p.n)}`;
+const PN=b=>b.iface!=null?S.ports[b.iface].n:'';
+const MGMT_NET=['192.168.1.0','255.255.255.0'];
+
+/* port defaults + extra lab state */
+const PDEF={desc:'',speed:'auto',duplex:'auto',portfast:false,bpdu:false,voice:null,mode:'access',native:1,allowed:null,ps:null,errdis:false,ch:null};
+S.ports=S.ports.map(p=>({...PDEF,...p}));
+Object.assign(S.ports[1],{desc:'PC-401-01',portfast:true,bpdu:true});
+Object.assign(S.ports[2],{mode:'trunk',desc:'Uplink core-sw1 Gi1/0/24'});
+S.ports[6]={...S.ports[6],tag:null,ev:undefined,vlan:200,up:false,errdis:'psecure-violation',ps:{max:1,viol:'shutdown',sticky:true},portfast:true,desc:'Printer-401'};
+Object.assign(S,{svis:[{vlan:1,ip:'192.168.1.50',mask:'255.255.255.0',up:true}],gw:'192.168.1.1',routes:[],hsrp:[],ospf:[],ipRouting:false,
+  errRec:{causes:[],interval:300},channels:[],unsaved:[],reloadAt:null,useNet:true,diag:{cmd:'vlan',arg:'',out:'',at:''},ctrClear:{},prefIface:null});
+S.startup=confSnap();S.snapStore={4:confSnap()};S.snapMeta={4:{at:'2026-10-11 22:23:10',d:'ก่อนสร้าง VLAN 300'}};
+
+const GROUPS=[['port','พอร์ต'],['vlan','VLAN / Trunk'],['sec','Port Security'],['adv','ขั้นสูง L2 / L3']];
+const ON=[['on','เปิด'],['off','ปิด']];
+const CAT={
+  iface:{g:'port',ic:'ph-power',cl:'bg-amber-100 text-amber-600',t:'Interface Up/Down',d:'เปิด (no shutdown) / ปิด (shutdown) พอร์ต',open:i=>openIface(i??1),
+    txt:b=>`${PN(b)} ${b.state==='up'?'เปิด (no shutdown)':'ปิด (shutdown)'}`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard())return;const want=b.state==='up';
+      if(p.admin===want)return c.skip('อยู่ในสถานะนี้แล้ว — ข้าม');
+      r.cli=[I(p),want?' no shutdown':' shutdown'];r.rb=[I(p),want?' shutdown':' no shutdown'];r.verify=`show interfaces ${p.n} status`;p.admin=want}},
+  desc:{g:'port',ic:'ph-text-aa',cl:'bg-sky-100 text-sky-700',t:'Description',d:'ตั้งคำอธิบายพอร์ต (description)',
+    fields:[['iface','iface','อินเทอร์เฟซ'],['text','text','Description','เช่น PC-401-02 (ASCII เท่านั้น)']],
+    def:p=>({text:p.desc}),
+    val:f=>!(f.text||'').trim()?'กรอกคำอธิบาย':!/^[\x20-\x7E]{1,64}$/.test(f.text.trim())?'IOS รับเฉพาะตัวอักษรอังกฤษ/ตัวเลข/สัญลักษณ์ ASCII ไม่เกิน 64 ตัว':'',
+    mk:f=>({iface:+f.iface,text:f.text.trim()}),
+    txt:b=>`${PN(b)} description "${esc(b.text)}"`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard())return;if(p.desc===b.text)return c.skip();
+      r.cli=[I(p),` description ${b.text}`];r.rb=[I(p),p.desc?` description ${p.desc}`:' no description'];r.verify=`show run interface ${p.n} | include description`;p.desc=b.text}},
+  speed:{g:'port',ic:'ph-gauge',cl:'bg-sky-100 text-sky-700',t:'Speed / Duplex',d:'กำหนดความเร็วและ duplex',
+    fields:[['iface','iface','อินเทอร์เฟซ'],['speed','sel','Speed',[['auto','auto'],['10','10 Mb/s'],['100','100 Mb/s'],['1000','1000 Mb/s']]],['duplex','sel','Duplex',[['auto','auto'],['full','full'],['half','half']]]],
+    def:p=>({speed:p.speed,duplex:p.duplex}),
+    val:f=>f.speed==='1000'&&f.duplex==='half'?'1000 Mb/s ไม่รองรับ half duplex':'',
+    mk:f=>({iface:+f.iface,speed:f.speed,duplex:f.duplex}),
+    txt:b=>`${PN(b)} speed ${b.speed} / duplex ${b.duplex}`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard()||!c.notCh())return;if(p.speed===b.speed&&p.duplex===b.duplex)return c.skip();
+      r.cli=[I(p),` speed ${b.speed}`,` duplex ${b.duplex}`];r.rb=[I(p),` speed ${p.speed}`,` duplex ${p.duplex}`];r.verify=`show interfaces ${p.n} | include duplex`;
+      c.note('ลิงก์จะ flap ประมาณ 2–3 วินาที และต้องตั้งให้ตรงกับปลายทาง');if(p.tag)c.danger('เปลี่ยน speed/duplex บน uplink');p.speed=b.speed;p.duplex=b.duplex}},
+  stp:{g:'port',ic:'ph-tree',cl:'bg-sky-100 text-sky-700',t:'PortFast / BPDU Guard',d:'spanning-tree portfast และ bpduguard',
+    fields:[['iface','iface','อินเทอร์เฟซ'],['pf','seg','PortFast',ON],['bg','seg','BPDU Guard',ON]],
+    def:p=>({pf:p.portfast?'on':'off',bg:p.bpdu?'on':'off'}),
+    mk:f=>({iface:+f.iface,pf:f.pf==='on',bg:f.bg==='on'}),
+    txt:b=>`${PN(b)} PortFast ${b.pf?'เปิด':'ปิด'} · BPDU Guard ${b.bg?'เปิด':'ปิด'}`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard())return;
+      if(b.pf&&(p.mode==='trunk'||p.tag))return c.block('ห้ามเปิด PortFast บน trunk/uplink — เสี่ยงเกิด switching loop');
+      if(p.portfast===b.pf&&p.bpdu===b.bg)return c.skip();
+      r.cli=[I(p),b.pf?' spanning-tree portfast':' no spanning-tree portfast',b.bg?' spanning-tree bpduguard enable':' no spanning-tree bpduguard'];
+      r.rb=[I(p),p.portfast?' spanning-tree portfast':' no spanning-tree portfast',p.bpdu?' spanning-tree bpduguard enable':' no spanning-tree bpduguard'];
+      r.verify=`show spanning-tree interface ${p.n} detail`;p.portfast=b.pf;p.bpdu=b.bg}},
+  voice:{g:'port',ic:'ph-phone',cl:'bg-sky-100 text-sky-700',t:'Voice VLAN',d:'switchport voice vlan สำหรับ IP Phone',
+    fields:[['iface','iface','อินเทอร์เฟซ'],['vlan','vlan','Voice VLAN','voice']],
+    def:p=>({vlan:p.voice??'none'}),
+    mk:f=>({iface:+f.iface,vlan:f.vlan==='none'?'none':+f.vlan}),
+    txt:b=>`${PN(b)} voice VLAN ${b.vlan==='none'?'ปิด':b.vlan}`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard()||!c.notCh())return;if(p.mode==='trunk')return c.block('voice VLAN ใช้กับพอร์ต access เท่านั้น');
+      const v=b.vlan==='none'?null:b.vlan;
+      if(v!=null&&!c.vlanExists(v))return c.block(`VLAN ${v} ไม่มีอยู่`);
+      if(v!=null&&v===p.vlan)return c.block('voice VLAN ต้องไม่ซ้ำกับ access VLAN');
+      if(p.voice===v)return c.skip();
+      r.cli=[I(p),v!=null?` switchport voice vlan ${v}`:' no switchport voice vlan'];r.rb=[I(p),p.voice!=null?` switchport voice vlan ${p.voice}`:' no switchport voice vlan'];
+      r.verify=`show interfaces ${p.n} switchport | include Voice`;p.voice=v}},
+  errrec:{g:'port',ic:'ph-first-aid',cl:'bg-sky-100 text-sky-700',t:'กู้พอร์ต err-disabled',d:'shutdown → no shutdown เพื่อกู้พอร์ตที่ถูกปิดอัตโนมัติ',
+    fields:[['iface','iface','อินเทอร์เฟซ']],
+    mk:f=>({iface:+f.iface}),
+    txt:b=>`${PN(b)} กู้จาก err-disabled`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard())return;if(!p.errdis)return c.skip('พอร์ตไม่ได้อยู่ในสถานะ err-disabled — ข้าม');
+      if(p.errdis==='psecure-violation')c.note('ถ้าเครื่องที่ทำให้เกิด violation ยังเสียบอยู่ พอร์ตจะ err-disabled ซ้ำ');
+      r.cli=[I(p),' shutdown',' no shutdown'];r.rb=[];r.verify='show interfaces status err-disabled';p.errdis=false;p.up=true}},
+  vlan:{g:'vlan',ic:'ph-tree-structure',cl:'bg-green-100 text-green-700',t:'VLAN',d:'สร้าง / เปลี่ยนชื่อ / ลบ VLAN',open:()=>openVlan('create'),
+    txt:b=>b.op==='create'?`สร้าง VLAN ${b.vlan}${b.name?` ชื่อ ${esc(b.name)}`:''}`:b.op==='rename'?`เปลี่ยนชื่อ VLAN ${b.vlan} → ${esc(b.name)}`:`ลบ VLAN ${b.vlan}`,
+    an:(b,c,r)=>{const vl=c.st.vlans,ex=vl.find(v=>v.id===b.vlan);r.verify='show vlan brief';
+      if(RESERVED.includes(b.vlan))return c.block(`VLAN ${b.vlan} เป็น VLAN ระบบ แก้ไขไม่ได้`);
+      if(b.op==='create'){if(ex)return c.skip('มี VLAN นี้อยู่แล้วบน live state — ข้าม');r.cli=[`vlan ${b.vlan}`,...(b.name?[` name ${b.name}`]:[])];r.rb=[`no vlan ${b.vlan}`];vl.push({id:b.vlan,name:b.name||'VLAN'+String(b.vlan).padStart(4,'0'),st:'active'});vl.sort((a,z)=>a.id-z.id);return}
+      if(!ex)return c.block(`ไม่พบ VLAN ${b.vlan} บนสวิตช์`);
+      if(b.op==='rename'){if(ex.name===b.name)return c.skip('ชื่อเดิมอยู่แล้ว — ข้าม');r.cli=[`vlan ${b.vlan}`,` name ${b.name}`];r.rb=[`vlan ${b.vlan}`,` name ${ex.name}`];ex.name=b.name;return}
+      if(!isAdmin())return c.block('การลบ VLAN ต้องเป็น Admin');
+      const users=c.st.ports.filter(q=>q.mode==='access'&&(q.vlan===b.vlan||q.voice===b.vlan));
+      if(users.length)return c.block(`ยังมีพอร์ตใช้ VLAN นี้: ${users.map(q=>q.n).join(', ')} — ย้ายพอร์ตออกก่อน`);
+      if(c.st.svis.some(s=>s.vlan===b.vlan))return c.block(`ยังมี interface Vlan${b.vlan} (SVI) — ลบ SVI ก่อน`);
+      c.danger('คำสั่งอันตราย — ต้องพิมพ์ hostname ยืนยัน');r.cli=[`no vlan ${b.vlan}`];r.rb=[`vlan ${b.vlan}`,` name ${ex.name}`];vl.splice(vl.indexOf(ex),1)}},
+  access:{g:'vlan',ic:'ph-arrows-left-right',cl:'bg-indigo-100 text-indigo-700',t:'Access Port VLAN',d:'ผูกพอร์ตเข้า VLAN (switchport access)',open:i=>openAccess(i??1),
+    txt:b=>`${PN(b)} → access VLAN ${b.vlan}`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard()||!c.notCh())return;
+      if(p.mode==='trunk')return c.block('พอร์ตนี้เป็น trunk — ใช้บล็อก Trunk › "เปลี่ยนกลับเป็น access"');
+      if(!c.vlanExists(b.vlan))return c.block(`VLAN ${b.vlan} ไม่มีอยู่ (สร้างในบล็อกก่อนหน้าได้)`);
+      if(p.voice===b.vlan)return c.block('access VLAN ซ้ำกับ voice VLAN ของพอร์ตนี้');
+      if(p.vlan===b.vlan)return c.skip('อยู่ใน VLAN นี้แล้ว — ข้าม');
+      r.cli=[I(p),' switchport mode access',` switchport access vlan ${b.vlan}`];r.rb=[I(p),` switchport access vlan ${p.vlan}`];r.verify=`show interfaces ${p.n} switchport`;p.vlan=b.vlan}},
+  trunk:{g:'vlan',admin:true,ic:'ph-git-merge',cl:'bg-indigo-100 text-indigo-700',t:'Trunk',d:'mode trunk · allowed add/remove · native VLAN',
+    fields:[['iface','iface','อินเทอร์เฟซ'],
+      ['op','sel','การทำงาน',[['to-trunk','เปลี่ยนเป็น trunk'],['add','เพิ่ม VLAN ที่ผ่าน trunk (allowed add)'],['remove','เอา VLAN ออกจาก trunk (allowed remove)'],['native','เปลี่ยน native VLAN'],['to-access','เปลี่ยนกลับเป็น access']]],
+      ['list','text','VLAN (คั่นด้วย , หรือช่วง 100-110)','เช่น 100,200 (เว้นว่าง = all)',f=>['to-trunk','add','remove'].includes(f.op)],
+      ['native','num','Native VLAN','1',f=>['to-trunk','native'].includes(f.op)],
+      ['avlan','vlan','Access VLAN','all',f=>f.op==='to-access']],
+    def:p=>({op:p.mode==='trunk'?'add':'to-trunk',native:String(p.native||1),list:'',avlan:p.vlan}),
+    val:f=>{if(['add','remove'].includes(f.op)&&!(f.list||'').trim())return 'ระบุ VLAN';const L=parseList(f.list);
+      if(L.some(x=>!(x>=1&&x<=4094)))return 'VLAN ต้องอยู่ระหว่าง 1–4094';
+      if(['to-trunk','native'].includes(f.op)&&!(+f.native>=1&&+f.native<=4094))return 'native VLAN ไม่ถูกต้อง';return ''},
+    mk:f=>({iface:+f.iface,op:f.op,list:parseList(f.list),native:+f.native||1,avlan:+f.avlan}),
+    txt:b=>{const p=PN(b);return {'to-trunk':`${p} → trunk${b.native!==1?` native ${b.native}`:''}${b.list.length?` allowed ${fmtList(b.list)}`:''}`,add:`${p} trunk allowed add ${fmtList(b.list)}`,remove:`${p} trunk allowed remove ${fmtList(b.list)}`,native:`${p} trunk native VLAN ${b.native}`,'to-access':`${p} trunk → access VLAN ${b.avlan}`}[b.op]},
+    an:(b,c,r)=>{const p=c.p;if(!c.guard()||!c.notCh())return;r.verify=`show interfaces ${p.n} trunk`;
+      const trunkLines=q=>[' switchport trunk encapsulation dot1q',' switchport mode trunk',...(q.native!==1?[` switchport trunk native vlan ${q.native}`]:[]),...(q.allowed?[` switchport trunk allowed vlan ${fmtList(q.allowed)}`]:[])];
+      if(b.op==='to-trunk'){if(p.mode==='trunk')return c.skip('เป็น trunk อยู่แล้ว — ข้าม');if(p.ps)return c.block('ปิด Port Security ก่อนเปลี่ยนเป็น trunk');
+        const q={native:b.native,allowed:b.list.length?b.list:null};
+        r.cli=[I(p),...trunkLines(q)];r.rb=[I(p),' no switchport trunk allowed vlan',' no switchport trunk native vlan',' switchport mode access',` switchport access vlan ${p.vlan}`];
+        c.danger('พอร์ตจะเป็น trunk — อุปกรณ์ปลายทางต้องตั้งเป็น trunk ด้วย');Object.assign(p,{mode:'trunk',native:q.native,allowed:q.allowed,voice:null,portfast:false});return}
+      if(p.mode!=='trunk')return c.block('พอร์ตนี้ไม่ใช่ trunk — เลือก "เปลี่ยนเป็น trunk" ก่อน');
+      const all=c.st.vlans.filter(v=>v.id<1002).map(v=>v.id);
+      if(b.op==='add'){if(!p.allowed)return c.skip('allowed เป็น all อยู่แล้ว — ข้าม');const add=b.list.filter(x=>!p.allowed.includes(x));if(!add.length)return c.skip();
+        r.cli=[I(p),` switchport trunk allowed vlan add ${fmtList(add)}`];r.rb=[I(p),` switchport trunk allowed vlan remove ${fmtList(add)}`];p.allowed=[...p.allowed,...add].sort((a,z)=>a-z);return}
+      if(b.op==='remove'){if(b.list.includes(1)&&p.tag)return c.block('ห้ามเอา VLAN 1 (management) ออกจาก uplink — แอปจะหลุดการเชื่อมต่อ');
+        const cur=p.allowed||null,rem=cur?b.list.filter(x=>cur.includes(x)):b.list;if(!rem.length)return c.skip('VLAN เหล่านี้ไม่ได้อยู่ใน allowed — ข้าม');
+        r.cli=[I(p),` switchport trunk allowed vlan remove ${fmtList(rem)}`];r.rb=cur?[I(p),` switchport trunk allowed vlan add ${fmtList(rem)}`]:[I(p),' switchport trunk allowed vlan all'];
+        if(p.tag)c.danger('ตัด VLAN ออกจาก uplink — ผู้ใช้ VLAN นั้นฝั่งปลายทางจะหลุด');p.allowed=(cur||all).filter(x=>!rem.includes(x));return}
+      if(b.op==='native'){if(p.native===b.native)return c.skip();r.cli=[I(p),` switchport trunk native vlan ${b.native}`];r.rb=[I(p),p.native===1?' no switchport trunk native vlan':` switchport trunk native vlan ${p.native}`];
+        c.danger('native VLAN ต้องตรงกับปลายทาง ไม่งั้นเกิด native VLAN mismatch');p.native=b.native;return}
+      if(p.tag)return c.block('ห้ามเปลี่ยน uplink กลับเป็น access ผ่านแอป — จะเหลือ VLAN เดียวบนลิงก์');
+      if(!c.vlanExists(b.avlan))return c.block(`VLAN ${b.avlan} ไม่มีอยู่`);
+      r.cli=[I(p),' no switchport trunk allowed vlan',' no switchport trunk native vlan',' switchport mode access',` switchport access vlan ${b.avlan}`];r.rb=[I(p),...trunkLines(p)];
+      c.danger('พอร์ตจะเหลือ VLAN เดียว');Object.assign(p,{mode:'access',vlan:b.avlan,native:1,allowed:null})}},
+  portsec:{g:'sec',admin:true,ic:'ph-shield-check',cl:'bg-rose-100 text-rose-700',t:'Port Security',d:'จำกัดจำนวน MAC · violation · sticky',
+    fields:[['iface','iface','อินเทอร์เฟซ'],['on','seg','Port Security',ON],
+      ['max','num','จำนวน MAC สูงสุด','1–64',f=>f.on==='on'],
+      ['viol','sel','เมื่อพบ MAC เกิน',[['protect','protect — ทิ้งแพ็กเก็ตเงียบๆ'],['restrict','restrict — ทิ้ง + log + นับจำนวน'],['shutdown','shutdown — ปิดพอร์ต (err-disabled)']],f=>f.on==='on'],
+      ['sticky','seg','Sticky MAC',[['on','จำ MAC อัตโนมัติ'],['off','ไม่ใช้']],f=>f.on==='on']],
+    def:p=>p.ps?{on:'on',max:String(p.ps.max),viol:p.ps.viol,sticky:p.ps.sticky?'on':'off'}:{on:'on',max:'1',viol:'restrict',sticky:'on'},
+    val:f=>f.on==='on'&&!(+f.max>=1&&+f.max<=64)?'จำนวน MAC ต้อง 1–64':'',
+    mk:f=>({iface:+f.iface,on:f.on==='on',max:+f.max,viol:f.viol,sticky:f.sticky==='on'}),
+    txt:b=>b.on?`${PN(b)} Port Security max ${b.max} · ${b.viol}${b.sticky?' · sticky':''}`:`${PN(b)} ปิด Port Security`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard()||!c.notCh())return;if(p.mode==='trunk')return c.block('Port Security ใช้กับพอร์ต access เท่านั้น');
+      const lines=ps=>ps?[' switchport mode access',' switchport port-security',` switchport port-security maximum ${ps.max}`,` switchport port-security violation ${ps.viol}`,ps.sticky?' switchport port-security mac-address sticky':' no switchport port-security mac-address sticky']
+        :[' no switchport port-security',' no switchport port-security maximum',' no switchport port-security violation',' no switchport port-security mac-address sticky'];
+      const nps=b.on?{max:b.max,viol:b.viol,sticky:b.sticky}:null;
+      if(JSON.stringify(nps)===JSON.stringify(p.ps))return c.skip();
+      r.cli=[I(p),...lines(nps)];r.rb=[I(p),...lines(p.ps)];r.verify=`show port-security interface ${longName(p.n)}`;
+      if(nps&&nps.viol==='shutdown')c.note('ถ้าพบ MAC เกินกำหนด พอร์ตจะ err-disabled ทันที');p.ps=nps}},
+  psclear:{g:'sec',admin:true,ic:'ph-eraser',cl:'bg-rose-100 text-rose-700',t:'ล้าง Sticky MAC',d:'clear port-security sticky interface',
+    fields:[['iface','iface','อินเทอร์เฟซ']],mk:f=>({iface:+f.iface}),
+    txt:b=>`${PN(b)} ล้าง sticky MAC`,
+    an:(b,c,r)=>{const p=c.p;if(!c.guard())return;if(!(p.ps&&p.ps.sticky))return c.skip('ไม่มี sticky MAC บนพอร์ตนี้ — ข้าม');
+      r.cli=[`do clear port-security sticky interface ${longName(p.n)}`];r.rb=[];r.verify='show port-security address';c.note('ย้อนกลับไม่ได้ — MAC จะถูกเรียนรู้ใหม่จากเครื่องที่เสียบอยู่')}},
+  errdis:{g:'sec',admin:true,ic:'ph-clock-counter-clockwise',cl:'bg-rose-100 text-rose-700',t:'Errdisable Recovery',d:'กู้พอร์ต err-disabled อัตโนมัติตามเวลา',
+    fields:[['on','seg','สถานะ',[['on','เปิดกู้อัตโนมัติ'],['off','ปิด']]],['cause','sel','สาเหตุ',[['psecure-violation','psecure-violation'],['bpduguard','bpduguard'],['link-flap','link-flap'],['all','ทุกสาเหตุ']]],['interval','num','รอกู้คืนกี่วินาที','30–86400',f=>f.on==='on']],
+    def:()=>({on:'on',cause:'psecure-violation',interval:String(S.errRec.interval)}),
+    val:f=>f.on==='on'&&!(+f.interval>=30&&+f.interval<=86400)?'ช่วงเวลาต้อง 30–86400 วินาที':'',
+    mk:f=>({on:f.on==='on',cause:f.cause,interval:+f.interval||300}),
+    txt:b=>b.on?`errdisable recovery ${b.cause} ทุก ${b.interval} วินาที`:`ปิด errdisable recovery ${b.cause}`,
+    an:(b,c,r)=>{const e=c.st.errRec,has=e.causes.includes(b.cause);r.verify='show errdisable recovery';
+      if(b.on){if(has&&e.interval===b.interval)return c.skip();
+        r.cli=[...(has?[]:[`errdisable recovery cause ${b.cause}`]),...(e.interval!==b.interval?[`errdisable recovery interval ${b.interval}`]:[])];
+        r.rb=[...(has?[]:[`no errdisable recovery cause ${b.cause}`]),...(e.interval!==b.interval?[`errdisable recovery interval ${e.interval}`]:[])];
+        if(!has)e.causes.push(b.cause);e.interval=b.interval;return}
+      if(!has)return c.skip();r.cli=[`no errdisable recovery cause ${b.cause}`];r.rb=[`errdisable recovery cause ${b.cause}`];e.causes=e.causes.filter(x=>x!==b.cause)}},
+  etherchannel:{g:'adv',admin:true,net:true,ic:'ph-link-simple',cl:'bg-violet-100 text-violet-700',t:'EtherChannel (LACP)',d:'รวม 2 พอร์ตเป็น Port-channel',
+    fields:[['iface','iface','พอร์ตที่ 1'],['iface2','iface2','พอร์ตที่ 2'],['group','num','Port-channel หมายเลข','1–48'],['mode','sel','โหมด',[['active','active (LACP)'],['passive','passive (LACP)'],['on','on (static — ไม่แนะนำ)']]]],
+    def:()=>({}),
+    val:f=>+f.iface===+f.iface2?'เลือกพอร์ตคนละพอร์ต':!(+f.group>=1&&+f.group<=48)?'หมายเลข Port-channel ต้อง 1–48':'',
+    mk:f=>({iface:+f.iface,iface2:+f.iface2,group:+f.group,mode:f.mode}),
+    txt:b=>`Port-channel${b.group}: ${PN(b)} + ${S.ports[b.iface2].n} (${b.mode})`,
+    an:(b,c,r)=>{const q1=c.p,q2=c.st.ports[b.iface2];r.verify=`show etherchannel ${b.group} summary`;
+      if(q1.tag||q2.tag)return c.block('ห้ามรวมพอร์ต uplink/management ผ่านแอป — ทำผ่าน console เท่านั้น');
+      if(q1.ch||q2.ch)return c.block('มีพอร์ตที่อยู่ใน Port-channel อื่นแล้ว');
+      if(c.st.channels.some(x=>x.g===b.group))return c.block(`Port-channel${b.group} มีอยู่แล้ว`);
+      if(q1.ps||q2.ps)return c.block('ปิด Port Security ก่อนรวมพอร์ต');
+      if(q1.mode!==q2.mode||(q1.mode==='access'&&q1.vlan!==q2.vlan)||(q1.mode==='trunk'&&q1.native!==q2.native))return c.block('สองพอร์ตต้องมี mode / VLAN / native ตรงกันก่อนรวม');
+      if(q1.speed!==q2.speed||q1.duplex!==q2.duplex)return c.block('speed/duplex ของสองพอร์ตต้องตรงกัน');
+      r.cli=[I(q1),` channel-group ${b.group} mode ${b.mode}`,I(q2),` channel-group ${b.group} mode ${b.mode}`];
+      r.rb=[I(q1),' no channel-group',I(q2),' no channel-group',`no interface Port-channel${b.group}`];
+      c.danger('ต้องตั้งฝั่งอุปกรณ์ปลายทางด้วย ไม่งั้น LACP จะค้างที่ flag (SD)');if(b.mode==='on')c.note('โหมด on ไม่มีการเจรจา — ถ้าปลายทางไม่ตรงเสี่ยงเกิด loop');
+      q1.ch=q2.ch=b.group;c.st.channels.push({g:b.group,mode:b.mode,members:[q1.n,q2.n]})}},
+  svi:{g:'adv',admin:true,net:true,ic:'ph-network',cl:'bg-violet-100 text-violet-700',t:'SVI (interface Vlan)',d:'ตั้ง IP ให้ VLAN / เปิด-ปิด / ลบ',
+    fields:[['vlan','vlan','VLAN','svi'],['state','seg','การทำงาน',[['up','ตั้ง IP + no shutdown'],['down','shutdown'],['remove','ลบ SVI']]],['ip','ip','IP Address','เช่น 10.10.100.1',f=>f.state!=='remove'],['mask','ip','Subnet mask','255.255.255.0',f=>f.state!=='remove']],
+    def:()=>({mask:'255.255.255.0',state:'up'}),
+    val:f=>f.state==='remove'?'':!ipOk(f.ip)?'IP Address ไม่ถูกต้อง':!maskOk(f.mask)?'Subnet mask ไม่ถูกต้อง':'',
+    mk:f=>({vlan:+f.vlan,state:f.state,ip:f.ip,mask:f.mask}),
+    txt:b=>b.state==='remove'?`ลบ interface Vlan${b.vlan}`:`interface Vlan${b.vlan} ${b.ip}/${pfx(b.mask)}${b.state==='down'?' (shutdown)':''}`,
+    an:(b,c,r)=>{const v=b.vlan,st=c.st;r.verify='show ip interface brief | include Vlan';
+      if(v===1)return c.block('Vlan1 คือ management SVI ของแอป — แก้ผ่านแอปไม่ได้');
+      if(!c.vlanExists(v))return c.block(`VLAN ${v} ไม่มีอยู่ — สร้าง VLAN ก่อน`);
+      const ex=st.svis.find(s=>s.vlan===v),restore=s=>[`interface Vlan${v}`,` ip address ${s.ip} ${s.mask}`,s.up?' no shutdown':' shutdown'];
+      if(b.state==='remove'){if(!ex)return c.skip('ไม่มี SVI นี้ — ข้าม');if(st.hsrp.some(h=>h.vlan===v))return c.block('ลบ HSRP ของ VLAN นี้ก่อน');
+        r.cli=[`no interface Vlan${v}`];r.rb=restore(ex);c.danger('ลบ L3 interface');st.svis.splice(st.svis.indexOf(ex),1);return}
+      const nw=netOf(b.ip,b.mask);
+      if(b.ip===nw||b.ip===n2ip((ip2n(nw)|~ip2n(b.mask))>>>0))return c.block('IP นี้เป็น network/broadcast address');
+      const ov=st.svis.find(s=>s.vlan!==v&&(inNet(b.ip,s.ip,s.mask)||inNet(s.ip,b.ip,b.mask)));if(ov)return c.block(`subnet ซ้อนกับ Vlan${ov.vlan} (${ov.ip}/${pfx(ov.mask)})`);
+      const nu={vlan:v,ip:b.ip,mask:b.mask,up:b.state==='up'};
+      if(ex&&JSON.stringify(ex)===JSON.stringify(nu))return c.skip();
+      r.cli=restore(nu);r.rb=ex?restore(ex):[`no interface Vlan${v}`];c.danger('เพิ่ม/เปลี่ยน L3 interface');
+      if(!st.ipRouting)c.note('ยังไม่ได้เปิด ip routing — สวิตช์จะไม่ route ระหว่าง VLAN');
+      if(ex)Object.assign(ex,nu);else st.svis.push(nu)}},
+  gw:{g:'adv',admin:true,net:'force',ic:'ph-signpost',cl:'bg-violet-100 text-violet-700',t:'Default Gateway',d:'ip default-gateway (กระทบ management)',
+    fields:[['ip','ip','Default gateway','192.168.1.1']],
+    def:()=>({ip:S.gw}),val:f=>!ipOk(f.ip)?'IP ไม่ถูกต้อง':'',mk:f=>({ip:f.ip}),
+    txt:b=>`ip default-gateway ${b.ip}`,
+    an:(b,c,r)=>{const st=c.st;r.verify='ping 192.168.1.133 (NetOps Server) ผ่าน gateway ใหม่';
+      if(st.gw===b.ip)return c.skip();
+      if(!inNet(b.ip,...MGMT_NET))return c.block('gateway ต้องอยู่ใน subnet management 192.168.1.0/24');
+      if(b.ip==='192.168.1.50')return c.block('เป็น IP ของสวิตช์เอง');
+      r.cli=[`ip default-gateway ${b.ip}`];r.rb=[`ip default-gateway ${st.gw}`];c.danger('กระทบเส้นทาง management โดยตรง — บังคับใช้ตาข่าย reload in 10');
+      if(st.ipRouting)c.note('เปิด ip routing อยู่ — ค่านี้จะถูกเพิกเฉย ใช้ default route แทน');st.gw=b.ip}},
+  route:{g:'adv',admin:true,net:true,ic:'ph-path',cl:'bg-violet-100 text-violet-700',t:'Static Route',d:'ip route network mask next-hop',
+    fields:[['op','seg','การทำงาน',[['add','เพิ่ม'],['del','ลบ']]],['net','ip','Network','เช่น 10.20.0.0'],['mask','ip','Mask','255.255.255.0'],['nh','ip','Next-hop','เช่น 192.168.1.254']],
+    def:()=>({op:'add',mask:'255.255.255.0'}),
+    val:f=>!ipOk(f.net)?'Network ไม่ถูกต้อง':!maskOk(f.mask)?'Mask ไม่ถูกต้อง':netOf(f.net,f.mask)!==f.net?`network ไม่ตรงกับ mask (ควรเป็น ${netOf(f.net,f.mask)})`:!ipOk(f.nh)?'Next-hop ไม่ถูกต้อง':'',
+    mk:f=>({op:f.op,net:f.net,mask:f.mask,nh:f.nh}),
+    txt:b=>`${b.op==='del'?'ลบ ':''}ip route ${b.net}/${pfx(b.mask)} via ${b.nh}`,
+    an:(b,c,r)=>{const st=c.st,ex=st.routes.find(x=>x.net===b.net&&x.mask===b.mask&&x.nh===b.nh),line=`ip route ${b.net} ${b.mask} ${b.nh}`;r.verify=`show ip route ${b.net}`;
+      if(b.op==='del'){if(!ex)return c.skip('ไม่มี route นี้ — ข้าม');if(b.net==='0.0.0.0'&&st.ipRouting&&st.routes.filter(x=>x.net==='0.0.0.0').length<2)return c.block('ลบ default route ตอนเปิด ip routing — management จะหลุด');
+        r.cli=['no '+line];r.rb=[line];c.danger('ลบเส้นทาง');st.routes.splice(st.routes.indexOf(ex),1);return}
+      if(ex)return c.skip();
+      if(!c.connected(b.nh))return c.block('next-hop ไม่อยู่ใน subnet ที่เชื่อมต่อโดยตรง');
+      const R=c.needRouting();r.cli=[...R.pre,line];r.rb=['no '+line,...R.post];c.danger('เปลี่ยนตารางเส้นทาง');st.routes.push({net:b.net,mask:b.mask,nh:b.nh})}},
+  hsrp:{g:'adv',admin:true,net:true,ic:'ph-swap',cl:'bg-violet-100 text-violet-700',t:'HSRP',d:'standby group · virtual IP · priority · preempt',
+    fields:[['op','seg','การทำงาน',[['set','ตั้งค่า'],['del','ลบ group']]],['vlan','vlan','VLAN (ต้องมี SVI)','sviv'],['grp','num','Group','0–255'],
+      ['vip','ip','Virtual IP','เช่น 10.10.100.254',f=>f.op==='set'],['prio','num','Priority','1–255 (ค่าปกติ 100)',f=>f.op==='set'],['pre','seg','Preempt',ON,f=>f.op==='set']],
+    def:()=>({op:'set',grp:'1',prio:'110',pre:'on'}),
+    val:f=>!(+f.grp>=0&&+f.grp<=255)?'Group ต้อง 0–255':f.op==='set'&&!ipOk(f.vip)?'Virtual IP ไม่ถูกต้อง':f.op==='set'&&!(+f.prio>=1&&+f.prio<=255)?'Priority ต้อง 1–255':'',
+    mk:f=>({op:f.op,vlan:+f.vlan,grp:+f.grp,vip:f.vip,prio:+f.prio,pre:f.pre==='on'}),
+    txt:b=>b.op==='del'?`ลบ HSRP group ${b.grp} บน Vlan${b.vlan}`:`HSRP Vlan${b.vlan} group ${b.grp} VIP ${b.vip} prio ${b.prio}${b.pre?' preempt':''}`,
+    an:(b,c,r)=>{const st=c.st,v=b.vlan;r.verify='show standby brief';
+      if(v===1)return c.block('ห้ามตั้ง HSRP บน management SVI ผ่านแอป');
+      const svi=st.svis.find(s=>s.vlan===v);if(!svi)return c.block(`ยังไม่มี interface Vlan${v} — เพิ่มบล็อก SVI ก่อน`);
+      const ex=st.hsrp.find(h=>h.vlan===v&&h.grp===b.grp),lines=h=>[`interface Vlan${v}`,` standby ${h.grp} ip ${h.vip}`,` standby ${h.grp} priority ${h.prio}`,h.pre?` standby ${h.grp} preempt`:` no standby ${h.grp} preempt`];
+      if(b.op==='del'){if(!ex)return c.skip();r.cli=[`interface Vlan${v}`,` no standby ${b.grp}`];r.rb=lines(ex);c.danger('ลบ HSRP — gateway สำรองจะหายไป');st.hsrp.splice(st.hsrp.indexOf(ex),1);return}
+      if(!inNet(b.vip,svi.ip,svi.mask))return c.block(`Virtual IP ต้องอยู่ใน subnet ของ Vlan${v} (${netOf(svi.ip,svi.mask)}/${pfx(svi.mask)})`);
+      if(b.vip===svi.ip)return c.block('Virtual IP ต้องไม่ซ้ำกับ IP ของ SVI');
+      const nh={vlan:v,grp:b.grp,vip:b.vip,prio:b.prio,pre:b.pre};if(ex&&JSON.stringify(ex)===JSON.stringify(nh))return c.skip();
+      r.cli=lines(nh);r.rb=ex?lines(ex):[`interface Vlan${v}`,` no standby ${b.grp}`];c.danger('ต้องตั้งอุปกรณ์คู่ HSRP ด้วย');if(ex)Object.assign(ex,nh);else st.hsrp.push(nh)}},
+  ospf:{g:'adv',admin:true,net:true,ic:'ph-graph',cl:'bg-violet-100 text-violet-700',t:'OSPF',d:'router ospf · network … area',
+    fields:[['op','seg','การทำงาน',[['add','เพิ่ม network'],['del','ลบ network']]],['pid','num','Process ID','1'],['net','ip','Network','เช่น 10.10.100.0'],['wild','ip','Wildcard','0.0.0.255'],['area','num','Area','0']],
+    def:()=>({op:'add',pid:'1',wild:'0.0.0.255',area:'0'}),
+    val:f=>!(+f.pid>=1&&+f.pid<=65535)?'Process ID ต้อง 1–65535':!ipOk(f.net)?'Network ไม่ถูกต้อง':!wildOk(f.wild)?'Wildcard ไม่ถูกต้อง (เช่น 0.0.0.255)':!(+f.area>=0)?'Area ไม่ถูกต้อง':'',
+    mk:f=>({op:f.op,pid:+f.pid,net:f.net,wild:f.wild,area:+f.area}),
+    txt:b=>`${b.op==='del'?'ลบ ':''}OSPF ${b.pid}: network ${b.net} ${b.wild} area ${b.area}`,
+    an:(b,c,r)=>{const st=c.st,ex=st.ospf.find(o=>o.pid===b.pid&&o.net===b.net&&o.wild===b.wild),nl=` network ${b.net} ${b.wild} area ${b.area}`;r.verify='show ip ospf neighbor (state FULL)';
+      if(b.op==='del'){if(!ex)return c.skip();const last=st.ospf.filter(o=>o.pid===b.pid).length===1;
+        r.cli=last?[`no router ospf ${b.pid}`]:[`router ospf ${b.pid}`,' no'+nl];r.rb=[`router ospf ${b.pid}`,` network ${ex.net} ${ex.wild} area ${ex.area}`];c.danger('neighbor ใน network นี้จะหลุด');st.ospf.splice(st.ospf.indexOf(ex),1);return}
+      if(ex)return c.skip();
+      if(inWild('192.168.1.50',b.net,b.wild))c.danger('จะประกาศ subnet management เข้า OSPF');
+      else if(!st.svis.some(s=>inWild(s.ip,b.net,b.wild)))c.note('ยังไม่มีอินเทอร์เฟซใน network นี้ — จะไม่มี neighbor ขึ้น');
+      const isNew=!st.ospf.some(o=>o.pid===b.pid),R=c.needRouting();
+      r.cli=[...R.pre,`router ospf ${b.pid}`,nl];r.rb=[...(isNew?[`no router ospf ${b.pid}`]:[`router ospf ${b.pid}`,' no'+nl]),...R.post];c.danger('เปลี่ยน dynamic routing');st.ospf.push({pid:b.pid,net:b.net,wild:b.wild,area:b.area})}},
+};
+const BLOCKED=[['username / enable secret / aaa','เปลี่ยนบัญชีเข้าสวิตช์ — แอปจะเข้าไม่ได้'],['line vty / ip ssh / crypto key','ช่องทาง SSH ของแอปเอง'],['IP ของ Vlan1 / hostname','ตัวตนอุปกรณ์ที่ pin ไว้'],['erase / delete flash: / format / boot system','ทำลายข้อมูล กู้คืนไม่ได้'],['debug','ทำให้ CPU สวิตช์เต็ม'],['พิมพ์ CLI อิสระ','ข้าม Dry-Run และการตรวจความปลอดภัย']];
+
+function blockText(b){return CAT[b.kind]?CAT[b.kind].txt(b):b.kind}
+function blockCard(b,i){
+  const E=CAT[b.kind],danger=(b.kind==='vlan'&&b.op==='delete')||E.net;
+  const tag=b.iface!=null?S.ports[b.iface].tag:null;
+  return `<div class="flex items-center gap-4 border rounded-2xl p-4 ${b.on?'border-gray-200':'border-dashed border-gray-300 opacity-60'}">
+    <span class="w-11 h-11 rounded-full grid place-items-center shrink-0 ${E.cl}"><i class="ph ${E.ic} text-xl"></i></span>
+    <div class="flex-1 min-w-0"><p class="font-semibold">${blockText(b)}</p><p class="text-xs text-gray-500 flex flex-wrap gap-2 items-center mt-0.5">บล็อก #${i+1} · ${E.t} · ${b.src==='ai'?'ร่างโดย AI':'เพิ่มเอง'} ${E.admin?'<span class="border border-gray-300 rounded px-1">ADMIN</span>':''} ${danger?'<span class="text-red-600 font-semibold">· เสี่ยงสูง</span>':''} ${badge(tag,'text-[10px]')}</p></div>
+    <button onclick="moveBlock(${i},-1)" class="text-gray-400 hover:text-gray-700 ${i===0?'invisible':''}"><i class="ph ph-arrow-up"></i></button>
+    <button onclick="moveBlock(${i},1)" class="text-gray-400 hover:text-gray-700 ${i===S.blocks.length-1?'invisible':''}"><i class="ph ph-arrow-down"></i></button>
+    <button onclick="S.blocks[${i}].on=!S.blocks[${i}].on;render()" class="w-12 h-7 rounded-full relative shrink-0 ${b.on?'bg-primary':'bg-gray-300'}"><span class="absolute top-1 ${b.on?'left-6':'left-1'} w-5 h-5 bg-white rounded-full transition-all"></span></button>
+    <button onclick="S.blocks.splice(${i},1);render()" class="text-red-500 text-xl"><i class="ph ph-trash"></i></button></div>`;
+}
+
+/* ---------- Dry-run analysis: simulate every block against a copy of live state ---------- */
+function analyze(blocks){
+  const st=confSnap();
+  const res=blocks.map(b=>{
+    const r={b,status:'ok',note:'',cli:[],rb:[],verify:''},E=CAT[b.kind];
+    const c={st,r,p:b.iface!=null?st.ports[b.iface]:null,
+      block:m=>{r.status='blocked';r.note=m;return false},
+      skip:(m='ไม่มีการเปลี่ยนแปลง — ข้าม')=>{if(r.status!=='blocked'){r.status='skip';r.note=m}},
+      note:m=>{r.note=r.note?r.note+' · '+m:m},
+      danger:m=>{if(r.status!=='blocked'&&r.status!=='skip'){r.status='danger';c.note(m)}},
+      vlanExists:id=>st.vlans.some(v=>v.id===id),
+      notCh:()=>!c.p.ch||c.block(`พอร์ตอยู่ใน Port-channel${c.p.ch} — ตั้งค่าที่ Port-channel แทน`),
+      connected:ip=>st.svis.some(s=>s.up&&inNet(ip,s.ip,s.mask)&&ip!==s.ip),
+      needRouting:()=>{if(st.ipRouting)return {pre:[],post:[]};st.ipRouting=true;
+        const hasDef=st.routes.some(x=>x.net==='0.0.0.0');if(!hasDef)st.routes.push({net:'0.0.0.0',mask:'0.0.0.0',nh:st.gw});
+        c.note(`เปิด ip routing — เพิ่ม default route ไป ${st.gw} ให้อัตโนมัติ เพราะ ip default-gateway จะถูกเพิกเฉยเมื่อเปิด routing (กัน management หลุด)`);
+        return {pre:['ip routing',...(hasDef?[]:[`ip route 0.0.0.0 0.0.0.0 ${st.gw}`])],post:[...(hasDef?[]:[`no ip route 0.0.0.0 0.0.0.0 ${st.gw}`]),'no ip routing']}},
+      guard:()=>{const q=c.p;if(!q)return true;
+        if(q.tag==='MGMT')return c.block(`${longName(q.n)} ${MGMT_REASON}`);
+        if(q.tag){if(!isAdmin())return c.block('PROTECTED uplink: ADMIN confirmation required (คุณเป็น Operator)');r.status='admin';c.note('PROTECTED uplink — ต้องพิมพ์ hostname ยืนยัน')}
+        return true}};
+    if(!E)c.block('ไม่รู้จักบล็อกนี้');
+    else if(E.admin&&!isAdmin())c.block(`${E.t} ต้องเป็น Admin`);
+    else E.an(b,c,r);
+    if(r.status==='ok'&&!r.cli.length&&!r.note)c.skip();
+    return r});
+  res.final=st;return res;
+}
+
+/* ---------- generic block dialog ---------- */
+function vlanOpts(mode){
+  const pend=S.blocks.filter(b=>b.kind==='vlan'&&b.op==='create'&&!S.vlans.some(v=>v.id===b.vlan)).map(b=>[b.vlan,`VLAN ${b.vlan} - ${b.name||'(ใหม่ในชุดบล็อก)'}`]);
+  let base=S.vlans.filter(v=>v.id<1002).map(v=>[v.id,`VLAN ${v.id} - ${v.name}${S.svis.some(s=>s.vlan===v.id)?' · มี SVI':''}`]).concat(pend);
+  if(mode==='voice')base=[['none','ไม่ใช้ voice VLAN'],...base.filter(([id])=>id!==1)];
+  if(mode==='sviv'){const pendSvi=S.blocks.filter(b=>b.kind==='svi'&&b.state!=='remove').map(b=>b.vlan);base=base.filter(([id])=>S.svis.some(s=>s.vlan===id)||pendSvi.includes(id))}
+  return base.length?base:[['','— ไม่มี VLAN ที่ใช้ได้ —']];
+}
+function segF(key,opts){return `<div class="flex rounded-full border border-gray-400 overflow-hidden">${opts.map(([v,l],i)=>`<button onclick="S.form.${key}='${v}';render()" class="flex-1 py-2.5 px-3 text-sm flex items-center justify-center gap-2 ${i?'border-l border-gray-400':''} ${S.form[key]===v?'bg-indigo-100 text-gray-900':'bg-white hover:bg-gray-50'}">${S.form[key]===v?'<i class="ph-bold ph-check"></i>':''}${l}</button>`).join('')}</div>`}
+function fieldHtml([key,type,label,opts,show]){
+  if(show&&!show(S.form))return '';
+  const lab=`<label class="text-sm text-gray-500 mb-1 block">${label}</label>`;
+  const sel=items=>`<select onchange="S.form.${key}=this.value;${key==='iface'?'blkIface()':'render()'}" class="w-full border border-[#EDE6D3] rounded-2xl px-5 py-4 text-base bg-white">${items.map(([v,l])=>`<option value="${v}" ${String(S.form[key])===String(v)?'selected':''}>${esc(l)}</option>`).join('')}</select>`;
+  let h;
+  if(type==='iface'||type==='iface2')h=sel(S.ports.map((p,i)=>[i,`${p.n} · ${p.mode==='trunk'?'trunk':'vlan '+p.vlan} · ${!p.admin?'shut':p.errdis?'err-disabled':p.up?'up':'down'}${p.ch?' · Po'+p.ch:''}${p.tag?' · '+TAG[p.tag].l:''}${p.desc?' · '+p.desc:''}`]))+(type==='iface'?portNote(+S.form[key]):'');
+  else if(type==='vlan')h=sel(vlanOpts(opts));
+  else if(type==='sel')h=sel(opts);
+  else if(type==='seg')h=segF(key,opts);
+  else h=`<input type="${type==='num'?'number':'text'}" ${type==='ip'?'inputmode="decimal"':''} value="${esc(S.form[key])}" oninput="S.form.${key}=this.value" placeholder="${esc(opts||label)}" class="w-full border border-[#EDE6D3] rounded-2xl px-5 py-4 text-base placeholder-gray-400 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary ${type==='ip'?'font-mono':''}">`;
+  return `<div>${lab}${h}</div>`;
+}
+function openBlk(k,iface){const E=CAT[k];S.sheet=false;
+  if(E.open){E.open(iface);return}
+  const free=S.ports.findIndex(p=>!p.tag&&!p.ch);
+  S.form={};
+  if(E.fields.some(f=>f[1]==='iface')){
+    let i=iface??(k==='errrec'?S.ports.findIndex(p=>p.errdis):k==='psclear'?S.ports.findIndex(p=>p.ps&&p.ps.sticky):k==='trunk'?S.ports.findIndex(p=>p.mode==='trunk'&&!p.tag):free);
+    if(i<0)i=free;S.form.iface=String(i);Object.assign(S.form,E.def?E.def(S.ports[i]):{});
+  }else Object.assign(S.form,E.def?E.def():{});
+  if(k==='etherchannel'){const fr=S.ports.map((p,i)=>i).filter(i=>!S.ports[i].tag&&!S.ports[i].ch);S.form.iface=String(fr[0]??1);S.form.iface2=String(fr[1]??fr[0]??1);
+    let g=1;while(S.channels.some(x=>x.g===g))g++;S.form.group=String(g);S.form.mode='active'}
+  E.fields.forEach(([key,type,,opts])=>{if(S.form[key]==null){if(type==='sel'||type==='seg')S.form[key]=opts[0][0];else if(type==='vlan')S.form[key]=String(vlanOpts(opts)[0][0]);else S.form[key]=''}});
+  S.modal={type:'blk',kind:k};render()}
+function blkIface(){const E=CAT[S.modal.kind];if(E.def&&S.modal.kind!=='etherchannel')Object.assign(S.form,E.def(S.ports[+S.form.iface]));render()}
+function blkSave(){const k=S.modal.kind,E=CAT[k],f=S.form;const e=E.val?E.val(f):'';if(e){f.err=e;render();return}addBlock({kind:k,...E.mk(f)})}
+
+V.dryrun=()=>{
+  const res=analyze(S.dry.blocks);
+  const blocked=res.some(r=>r.status==='blocked'), needConfirm=res.some(r=>r.status==='admin'||r.status==='danger');
+  const eff=res.filter(r=>r.cli.length);
+  const net=eff.some(r=>CAT[r.b.kind].net), force=eff.some(r=>CAT[r.b.kind].net==='force'), useNet=net&&(force||S.useNet);
+  const cli=eff.length?[...(useNet?['reload in 10','! ↑ ตาข่ายกันพลาด (ตอบ [confirm])']:[]),'configure terminal',...eff.flatMap(r=>r.cli),'end',...(useNet?['! verify ผ่านแล้วจึงยกเลิกตาข่าย','reload cancel']:[])]:[];
+  const rbl=[...eff].reverse().flatMap(r=>r.rb);
+  const rb=rbl.length?['configure terminal',...rbl,'end']:[];
+  const reasons=[];
+  if(!S.serverOnline)reasons.push('ติดต่อ NetOps Server ไม่ได้ — ขอ Global Lock ไม่ได้ (Fail-closed)');
+  if(!S.deviceOnline)reasons.push('อ่าน live state จาก s1 ไม่ได้ — ผลด้านล่างอ้างอิงค่า cached');
+  if(blocked)reasons.push('มีบล็อกที่ถูกปฏิเสธ — ปิดหรือลบบล็อกนั้นก่อน');
+  if(!eff.length)reasons.push('ไม่มีคำสั่งที่ต้องส่ง');
+  if(needConfirm&&S.confirmText!=='s1')reasons.push('พิมพ์ hostname "s1" เพื่อยืนยัน');
+  const can=!reasons.length, nSteps=5+(useNet?2:0);
+  const ST={ok:['ph-check-circle','text-green-600','ผ่าน'],admin:['ph-shield-warning','text-orange-600','ต้องยืนยัน'],danger:['ph-warning','text-red-600','เสี่ยงสูง'],blocked:['ph-prohibit','text-red-600','ถูกปฏิเสธ'],skip:['ph-minus-circle','text-gray-400','ข้าม']};
+  const code=(lines,cls)=>`<pre class="font-mono text-sm leading-6 rounded-xl p-4 overflow-x-auto ${cls}">${lines.length?lines.map(l=>l.startsWith('!')?`<span class="opacity-50">${esc(l)}</span>`:esc(l)).join('\n'):'— ไม่มี —'}</pre>`;
+  return `
+<header class="flex justify-between items-center px-8 pt-6 pb-4">${backBtn(`go('${S.dry.from}')`)}<h1 class="font-bold text-xl">ผล Dry-Run · s1</h1><span class="w-20"></span></header>
+<div class="px-8 pb-6 flex-1 space-y-5">
+  <p class="text-sm text-gray-500">${S.deviceOnline?'อ่าน live state จาก s1 เมื่อ '+nowStr():'⚠️ ใช้ค่า cached '+S.lastVerified}  · ตรวจ Uplink/Management port แล้ว · ไม่บันทึกลง startup-config</p>
+  <div class="bg-white rounded-2xl border border-gray-100 divide-y">${res.map((r,i)=>`<div class="flex items-start gap-4 p-4">
+    <i class="ph-fill ${ST[r.status][0]} text-2xl ${ST[r.status][1]}"></i>
+    <div class="flex-1 min-w-0"><p class="font-semibold">${i+1}. ${blockText(r.b)}</p>${r.note?`<p class="text-sm ${ST[r.status][1]}">${esc(r.note)}</p>`:''}
+      ${r.verify&&r.cli.length?`<p class="text-xs text-gray-500 mt-1 flex items-center gap-1"><i class="ph ph-check-square-offset"></i>ตรวจผล: <span class="font-mono">${esc(r.verify)}</span></p>`:''}</div>
+    <span class="text-xs font-semibold whitespace-nowrap ${ST[r.status][1]}">${ST[r.status][2]}</span></div>`).join('')}</div>
+  ${net?`<div class="bg-amber-50 border border-amber-200 rounded-2xl p-5"><label class="flex items-start gap-3 ${force?'':'cursor-pointer'}"><input type="checkbox" ${useNet?'checked':''} ${force?'disabled':''} onchange="S.useNet=this.checked;render()" class="w-5 h-5 mt-1 accent-amber-600">
+    <div><p class="font-semibold">ตาข่ายกันพลาด: <span class="font-mono">reload in 10</span> ${force?'<span class="text-xs bg-red-100 text-red-700 rounded px-1.5 ml-1">บังคับ</span>':'<span class="text-xs text-gray-500">(แนะนำ)</span>'}</p>
+    <p class="text-sm text-gray-600">ตั้งเวลารีโหลดก่อนส่งคำสั่ง ถ้า verify ผ่านจึงส่ง <span class="font-mono">reload cancel</span> · ถ้าแอปหลุดการเชื่อมต่อกลางทาง สวิตช์จะรีบูตกลับไปใช้ startup-config เองภายใน 10 นาที โดยไม่ต้องพึ่งแอป</p></div></label></div>`:''}
+  <div class="grid md:grid-cols-2 gap-5">
+    <div><p class="font-semibold mb-2 flex items-center gap-2"><i class="ph ph-terminal-window"></i>คำสั่งที่จะส่ง (SSH)</p>${code(cli,'bg-gray-900 text-green-300')}</div>
+    <div><p class="font-semibold mb-2 flex items-center gap-2"><i class="ph ph-arrow-counter-clockwise"></i>คำสั่ง Rollback (ถ้า verify ไม่ผ่าน)</p>${code(rb,'bg-[#2a2219] text-amber-200')}</div>
+  </div>
+  ${needConfirm?`<div class="bg-red-50 border border-red-200 rounded-2xl p-5"><p class="font-semibold text-red-700 mb-2">ยืนยันคำสั่งที่ต้องใช้สิทธิ์ Admin / เสี่ยงสูง</p>
+    <p class="text-sm text-red-600 mb-3">พิมพ์ hostname ของอุปกรณ์ <b class="font-mono">s1</b> เพื่อยืนยัน</p>
+    <input id="ct" value="${esc(S.confirmText)}" oninput="S.confirmText=this.value;render();const e=$('ct');e.focus();e.setSelectionRange(e.value.length,e.value.length)" placeholder="s1" class="w-full max-w-xs font-mono border border-red-300 rounded-xl px-4 py-3 bg-white focus:outline-none focus:ring-2 focus:ring-red-300"></div>`:''}
+  <label class="flex items-center gap-3 text-sm text-gray-500"><input type="checkbox" ${S.simFail?'checked':''} onchange="S.simFail=this.checked" class="w-4 h-4">จำลอง: verify ไม่ผ่าน เพื่อดูขั้นตอน Auto-Rollback</label>
+</div>
+<div class="p-6 sticky bottom-0 bg-appBg border-t border-gray-200">
+  ${reasons.length?`<div class="text-sm text-red-600 mb-3 space-y-0.5">${reasons.map(r=>`<p>• ${r}</p>`).join('')}</div>`:''}
+  <button ${can?'onclick="applyPipeline()"':'disabled'} class="w-full rounded-2xl py-4 text-lg font-semibold flex justify-center items-center gap-2 ${can?'bg-primary hover:bg-blue-700 text-white':'bg-[#AEBFEA] text-white cursor-not-allowed'}"><i class="ph-fill ${can?'ph-paper-plane-tilt':'ph-lock-key'}"></i>Apply ${eff.length} บล็อก (Pipeline ${nSteps} ขั้น)</button>
+</div>`;
+};
+
+V.netops=()=>{
+  const on=S.serverOnline;
+  const row=(ic,k,v)=>`<div class="grid grid-cols-[32px_170px_1fr] items-center py-1.5"><i class="ph ${ic} text-xl text-gray-500"></i><span class="text-gray-500">${k}</span><span class="font-medium">${v}</span></div>`;
+  return `
+<header class="flex justify-between items-center px-8 pt-6 pb-4">${backBtn("go('dashboard')",'เมนูหลัก')}<h1 class="font-bold text-xl">NetOps Server</h1><span class="w-20"></span></header>
+<div class="px-8 pb-8 space-y-4">
+  <div class="bg-white rounded-2xl border border-gray-100 p-6">
+    <p class="font-semibold text-lg flex items-center gap-2 mb-3"><span class="w-3 h-3 rounded-full ${on?'bg-green-500':'bg-orange-400'}"></span>${on?'เชื่อมต่อแล้ว':'ติดต่อ server ไม่ได้ชั่วคราว'}</p>
+    ${row('ph-hard-drives','Server','http://192.168.1.133:8000')}${row('ph-user','บัญชี server','myuser (operator)')}
+    ${row('ph-lock-simple','Global Lock',on?'ว่าง · ไม่มีงานค้าง':'กำลังตรวจสอบ...')}${row('ph-shield','Telegram Guard',on?'เปิดใช้งาน · กลุ่ม NetOps-Admin':'-')}
+    ${on?'':'<p class="text-red-600 mt-3">ติดต่อ NetOps Server ไม่ได้: HTTP connection timed out after 0:00:08.000000, host: 192.168.1.133, port: 8000 — การเปลี่ยนคอนฟิกจะถูกปฏิเสธจนกว่าจะติดต่อได้ (Fail-closed)</p>'}
+  </div>
+  <button onclick="checkServer()" class="w-full bg-black/[.04] hover:bg-black/[.07] rounded-2xl py-4 text-lg font-semibold flex justify-center items-center gap-2">${S.checking?'<i class="ph ph-spinner spin"></i> กำลังตรวจ...':'ตรวจสถานะตอนนี้'}</button>
+  <button onclick="go('console')" class="w-full bg-black/[.04] hover:bg-black/[.07] rounded-2xl py-4 text-lg font-semibold">🖥️ Live Console (read-only)</button>
+  <button onclick="S.modal={type:'disconnect'};render()" class="w-full bg-red-500 hover:bg-red-600 text-white rounded-2xl py-4 text-lg font-semibold">ยกเลิกการเชื่อมต่อ</button>
+  <h3 class="font-bold text-lg pt-4">NetOps Server ทำอะไรให้แอปนี้</h3>
+  <div class="bg-white rounded-2xl border border-gray-100 p-6 space-y-3 text-[15px]">
+    <p>🔒 Global Lock — รันงานคอนฟิกได้ทีละ 1 งานทั้งระบบ (ทุกมือถือ/ทุกผู้ใช้) ระหว่าง Snapshot → ส่งคำสั่ง → ตรวจผล/Rollback</p>
+    <p>🛡️ Telegram Guard — host key ไม่ตรง ตัวตนอุปกรณ์ไม่ตรง หรือ Rollback ล้มเหลว จะแจ้งเตือนกลุ่ม Admin ทันที และ Admin กด "เตะออก" ได้</p>
+    <p>🤖 AI Assistant — พิมพ์ภาษาคนแล้วได้บล็อกคอนฟิกใน Block Editor (ยังต้อง Dry-Run และยืนยันเองเสมอ)</p>
+    <p>📱 การส่งคอนฟิกยังทำจากมือถือผ่าน SSH และ Pipeline 5 ขั้นเดิมทั้งหมด (Uplink Protection, Snapshot, Auto-Rollback)</p>
+  </div>
+</div>`;
+};
+
+V.console=()=>`
+<header class="flex justify-between items-center px-8 pt-6 pb-4">${backBtn("go('netops')")}<h1 class="font-bold text-xl">Live Console</h1>
+  <span class="text-xs font-semibold ${S.serverOnline?'text-green-600':'text-gray-400'} flex items-center gap-1.5"><span class="w-2 h-2 rounded-full ${S.serverOnline?'bg-green-500 animate-pulse':'bg-gray-400'}"></span>${S.serverOnline?'LIVE':'OFFLINE'}</span></header>
+<div class="px-8 pb-8 flex-1 flex flex-col">
+  <p class="text-sm text-gray-500 mb-3">read-only · แสดง log จาก NetOps Server (Global Lock, Snapshot, SSH, Verify) · พิมพ์คำสั่งไม่ได้</p>
+  <div id="con" class="flex-1 bg-[#111] rounded-2xl p-5 font-mono text-sm text-green-300 leading-7 overflow-y-auto min-h-[300px]">
+    ${S.console.map(l=>`<div class="${/fail|reject|rollback/i.test(l)?'text-amber-300':''}">${esc(l)}</div>`).join('')}
+    ${S.serverOnline?'<div class="text-gray-500">▍</div>':'<div class="text-red-400">[--:--:--] connection to 192.168.1.133:8000 timed out — waiting…</div>'}
+  </div>
+</div>`;
+
+V.actions=()=>{
+  const ready=S.serverOnline&&S.deviceOnline,ad=isAdmin();
+  const why=!S.serverOnline?'ติดต่อ NetOps Server ไม่ได้ — คำสั่งทั้งหมดถูกปฏิเสธ (Fail-closed)':!S.deviceOnline?'เข้าถึงสวิตช์ไม่ได้ — กด sync ก่อน':'';
+  const card=(ic,title,desc,body,tone='')=>`<div class="bg-white rounded-2xl border ${tone||'border-gray-100'} p-6"><p class="font-bold text-lg flex items-center gap-2"><i class="ph ${ic} text-2xl text-gray-600"></i>${title}</p><p class="text-gray-500 text-sm mt-1 mb-4">${desc}</p>${body}</div>`;
+  const btn=(fn,label,{admin=true,red=false,ghost=false,off=false}={})=>{const dis=off||!ready||(admin&&!ad);return `<button ${dis?'disabled':`onclick="${fn}"`} class="rounded-xl px-5 py-3 font-semibold ${dis?'bg-gray-100 text-gray-400 cursor-not-allowed':red?'bg-red-500 hover:bg-red-600 text-white':ghost?'border border-gray-300 hover:bg-gray-50':'bg-primary hover:bg-blue-700 text-white'}">${label}${admin&&!ad?' <span class="text-[10px] border border-gray-300 rounded px-1">ADMIN</span>':''}</button>`};
+  const snaps=Object.keys(S.snapStore).map(Number).sort((a,b)=>b-a);
+  const diff=S.unsaved.map(u=>`<span class="text-gray-500">! ${esc(u.at)} · ${esc(u.by)} · ${esc(u.d)}</span>\n`+u.cli.map(l=>`<span class="text-green-300">+ ${esc(l)}</span>`).join('\n')).join('\n');
+  return `
+<header class="flex items-center px-8 pt-6 pb-4">${backBtn("S.tab='overview';go('device')",'ตั้งค่า')}<h1 class="font-bold text-xl flex-1 text-center pr-16">Device Actions</h1></header>
+<div class="px-8 pb-10 space-y-4">
+  <div class="bg-white rounded-2xl border border-gray-100 p-6"><p class="font-bold text-xl">${esc(S.alias)}</p><p class="text-gray-500">IP: 192.168.1.50 · hostname s1 · ตู้ ${esc(S.loc)}</p>
+    ${why?`<p class="text-red-600 mt-2 flex items-center gap-1.5"><i class="ph ph-warning"></i>${why}</p>`:''}</div>
+  ${card('ph-floppy-disk','บันทึกคอนฟิกถาวร (write memory)',`running-config ต่างจาก startup-config <b class="${S.unsaved.length?'text-orange-600':'text-green-700'}">${S.unsaved.length} รายการ</b> · ถ้าสวิตช์รีบูตก่อนบันทึก การเปลี่ยนแปลงเหล่านี้จะหายทั้งหมด`,
+    (S.unsaved.length?`<pre class="font-mono text-xs leading-5 bg-gray-900 rounded-xl p-4 overflow-x-auto max-h-64">${diff}</pre>`:'<p class="text-green-700 flex items-center gap-2"><i class="ph-fill ph-check-circle"></i>running-config ตรงกับ startup-config แล้ว</p>')
+    +`<div class="flex gap-3 mt-4">${btn('confirmSave()','💾 บันทึกลง startup-config',{off:!S.unsaved.length})}</div>`,S.unsaved.length?'border-orange-200':'')}
+  ${card('ph-timer','ตั้งเวลารีโหลด (reload in / reload cancel)','ใช้เป็นตาข่ายกันพลาดก่อนแก้ไขงานเสี่ยงด้วยมือ — ถ้าลืมยกเลิก สวิตช์จะรีบูตกลับไปใช้ startup-config',
+    S.reloadAt?`<div class="flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 rounded-xl p-4"><p class="text-amber-800 font-semibold flex items-center gap-2"><i class="ph ph-timer text-xl"></i>สวิตช์จะรีโหลดเวลา ${S.reloadAt}</p>${btn('reloadCancel()','reload cancel',{ghost:true})}</div>`
+      :`<div class="flex gap-2 flex-wrap">${[5,10,30].map(m=>btn(`confirmReloadIn(${m})`,'reload in '+m,{ghost:true})).join('')}</div>`)}
+  ${card('ph-clock-counter-clockwise','ย้อนคอนฟิกทั้งไฟล์ (configure replace)','แทนที่ running-config ทั้งหมดด้วย snapshot ที่เก็บไว้ก่อนการเปลี่ยนแปลงแต่ละครั้ง — ใช้เมื่อ rollback รายบล็อกไม่พอ',
+    `<div class="divide-y border rounded-xl">${snaps.map(n=>`<div class="flex items-center gap-4 p-3"><i class="ph ph-camera text-xl text-gray-500"></i><div class="flex-1 min-w-0"><p class="font-medium">Snapshot #${n}</p><p class="text-xs text-gray-500 truncate">${esc((S.snapMeta[n]||{}).at||'')} · ก่อน: ${esc((S.snapMeta[n]||{}).d||'-')}</p></div>${btn(`confirmReplace(${n})`,'ย้อนไปจุดนี้',{ghost:true})}</div>`).join('')}</div>`)}
+  ${card('ph-broom','ล้างข้อมูลชั่วคราว','ไม่เปลี่ยนคอนฟิก · Operator ใช้ได้ · บันทึกลง Audit log',
+    `<div class="flex gap-2 flex-wrap">${btn('clearMac()','clear mac address-table dynamic',{admin:false,ghost:true})}${btn('clearCounters()','clear counters',{admin:false,ghost:true})}</div>`)}
+  ${card('ph-power','สั่งรีสตาร์ตอุปกรณ์ (reload)','ทำให้เครือข่ายหยุดชะงักชั่วขณะ · คอนฟิกที่ยังไม่ได้บันทึกถาวรจะหายไป'+(S.unsaved.length?` <b class="text-red-600">(${S.unsaved.length} รายการ)</b>`:''),
+    btn('confirmReload()','🔄 สั่งรีสตาร์ตอุปกรณ์ระยะไกล',{red:true}),'border-red-200')}
+</div>`;
+};
+
+/* ---------- Device management ---------- */
+const statusChip=(ok,okL='Connected',badL='Failed')=>`<span class="px-4 py-1.5 rounded-lg border font-medium flex items-center gap-2 whitespace-nowrap ${ok?'border-green-400 text-green-700':'border-orange-400 text-orange-700'}"><i class="ph ${ok?'ph-check-circle':'ph-warning'}"></i>${ok?okL:badL}</span>`;
+V.devices=()=>{
+  const stat=(ic,n,l)=>`<div class="bg-white rounded-2xl border border-gray-100 py-5 text-center"><i class="ph ${ic} text-3xl"></i><p class="text-4xl">${n}</p><p>${l}</p></div>`;
+  return `
+<header class="flex items-center px-8 pt-6 pb-4">${backBtn("go('dashboard')",'เมนูหลัก')}<h1 class="font-bold text-xl flex-1 text-center pr-24">จัดการอุปกรณ์</h1></header>
+<div class="px-5 pb-28 space-y-4">
+  <div class="grid grid-cols-3 gap-2">${stat('ph-hard-drives',(S.sw1Removed?0:1)+S.extraDevices.length,'Devices')}${stat('ph-link',S.deviceOnline?1:0,'SSH sessions')}${stat('ph-shield-warning',0,'Host-key alarms')}</div>
+  ${S.sw1Removed?`<div class="bg-white rounded-2xl border border-dashed border-gray-300 p-6 text-gray-500 flex justify-between">sw1 ถูกลบแล้ว (ประวัติยังอยู่ใน Audit Trail Log)<button onclick="restoreSw1()" class="text-primary">กู้ sw1 (เดโม)</button></div>`:`<button onclick="S.tab='overview';go('device')" class="w-full bg-white rounded-2xl border border-gray-100 p-6 flex gap-5 items-start text-left hover:bg-gray-50">
+    <i class="ph ph-router text-4xl text-gray-600"></i>
+    <div class="flex-1"><p class="text-xl">${esc(S.alias)}</p><p class="text-gray-500">s1 · 192.168.1.50:22 · ตู้ ${esc(S.loc)}</p><p class="text-gray-500">IOSv · IOS 15.0(TTC_20140605)FLO_DSGS7 · verified ${S.lastVerified}</p></div>
+    ${statusChip(S.deviceOnline)}</button>`}
+  ${S.extraDevices.map((d,i)=>`<div class="bg-white rounded-2xl border border-gray-100 p-6 flex gap-5 items-start">
+    <i class="ph ph-router text-4xl text-gray-400"></i>
+    <div class="flex-1"><p class="text-xl">${esc(d.name)}</p><p class="text-gray-500">${esc(d.ip)}:${esc(d.port)} · user ${esc(d.user)}</p><p class="text-gray-500 font-mono text-sm">${d.fp}</p></div>
+    <div class="flex flex-col items-end gap-2">${statusChip(false,'','Unverified')}
+    ${isAdmin()?`<button onclick="removeDevice(${i})" class="text-red-500 text-sm flex items-center gap-1"><i class="ph ph-trash"></i>ลบ</button>`:''}</div></div>`).join('')}
+</div>
+<button onclick="${isAdmin()?"S.form={port:'22',user:'netops',step:1};S.modal={type:'addDevice'};render()":"snack('เพิ่มอุปกรณ์ต้องเป็น Admin','err')"}" class="absolute bottom-6 right-6 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 rounded-2xl px-6 py-4 shadow-lg text-lg flex items-center gap-3"><i class="ph ph-plus text-2xl"></i>Add device</button>`;
+};
+
+/* ---------- Audit trail ---------- */
+V.audit=()=>{
+  const q=S.auditQ.toLowerCase();
+  const rows=S.audit.filter(a=>!q||[a.user,a.target,a.cmd,a.at].join(' ').toLowerCase().includes(q));
+  return `
+<header class="flex items-center px-8 pt-6 pb-4 gap-4">${backBtn("go('dashboard')",'เมนูหลัก')}
+  ${S.auditSearch?`<input id="aq" value="${esc(S.auditQ)}" oninput="S.auditQ=this.value;render();const e=$('aq');e.focus();e.setSelectionRange(e.value.length,e.value.length)" placeholder="ค้นหา user / target / คำสั่ง" class="flex-1 border border-gray-300 rounded-xl px-4 py-2 focus:outline-none focus:border-primary">`:'<h1 class="font-bold text-xl flex-1 text-center">Audit Trail Log</h1>'}
+  <button onclick="S.auditSearch=!S.auditSearch;if(!S.auditSearch)S.auditQ='';render();if(S.auditSearch)$('aq').focus()" class="text-2xl"><i class="ph ${S.auditSearch?'ph-x':'ph-magnifying-glass'}"></i></button></header>
+<div class="px-8 pb-6 space-y-4 flex-1">
+  ${S.auditQ?`<p class="text-sm text-gray-500">พบ ${rows.length} รายการ</p>`:''}
+  ${rows.map(a=>`<div class="bg-white rounded-2xl border border-gray-100 p-5">
+    <div class="flex justify-between"><span class="text-gray-500">${a.at}</span><span class="font-medium flex items-center gap-1.5 ${a.ok?'text-green-600':'text-red-500'}"><span class="w-2 h-2 rounded-full ${a.ok?'bg-green-500':'bg-red-500'}"></span>${a.ok?'Success':'Rejected'}</span></div>
+    <p class="font-bold text-lg">User: ${esc(a.user)}</p><p class="text-gray-500">Target: ${esc(a.target)}</p>
+    <p class="mt-2 bg-appBg border border-gray-100 rounded-lg px-4 py-2 font-mono text-sm break-all">Cmd: ${esc(a.cmd)}</p></div>`).join('')||'<p class="text-center text-gray-400 py-10">ไม่พบรายการ</p>'}
+</div>
+<div class="p-6 sticky bottom-0 bg-appBg"><button onclick="exportCSV()" class="w-full bg-[#1f1f1f] text-white rounded-2xl py-5 text-lg font-semibold">📋 ส่งออกรายงาน Log (CSV)</button></div>`;
+};
+
+/* ---------- SSH console (read-only monitor) ---------- */
+V.ssh=()=>`
+<header class="flex items-center px-8 pt-6 pb-4">${backBtn("go('dashboard')",'เมนูหลัก')}<h1 class="font-bold text-xl flex-1 text-center pr-24">SSH Console</h1></header>
+<div class="px-5 pb-5 flex-1 flex flex-col gap-4">
+  <div class="flex gap-4 items-center">
+    <div class="relative flex-1"><label class="absolute -top-2.5 left-4 bg-appBg px-1 text-xs text-gray-500">Device</label>
+      <select class="w-full bg-white border border-gray-200 rounded-xl px-5 py-4 text-lg"><option>sw1 (192.168.1.50)</option>${S.extraDevices.map(d=>`<option disabled>${esc(d.name)} (${esc(d.ip)}) — unverified</option>`).join('')}</select></div>
+    ${statusChip(S.deviceOnline)}
+  </div>
+  <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 flex gap-4"><i class="ph ph-info text-3xl text-blue-600"></i><div><p class="font-semibold text-blue-700 text-lg">Read-only monitor</p><p class="text-lg">Shows the commands the app sends and the device output, live. Free-text CLI is disabled by design; secrets are shown as ********.</p></div></div>
+  <div class="flex justify-between items-center">
+    <label class="flex items-center gap-3 text-lg"><input type="checkbox" ${S.follow?'checked':''} onchange="S.follow=this.checked" class="w-6 h-6 accent-blue-600">Follow output</label>
+    <div class="flex gap-6 text-gray-600"><button onclick="syncDevice()" class="flex items-center gap-2"><i class="ph ph-arrows-clockwise"></i>Refresh device</button><button onclick="S.ssh=[];render()" class="flex items-center gap-2"><i class="ph ph-text-align-left"></i>Clear view</button></div>
+  </div>
+  <div id="sshbox" class="flex-1 min-h-[320px] bg-black rounded-xl p-5 font-mono text-sm leading-6 overflow-y-auto ${S.ssh.length?'':'grid place-items-center'}">
+    ${S.ssh.length?S.ssh.map(l=>`<div class="${l.k==='>'?'text-sky-300':l.k==='!'?'text-red-400':'text-gray-300'} whitespace-pre-wrap">${l.k==='>'?'<span class="text-gray-500">'+l.t0+' s1#</span> ':''}${esc(l.s)}</div>`).join(''):'<p class="text-gray-400 font-sans text-lg">No traffic yet. Refresh the device or run a change.</p>'}
+  </div>
+</div>`;
+
+/* ---------- User management ---------- */
+V.users=()=>`
+<header class="flex items-center px-8 pt-6 pb-4">${backBtn("go('dashboard')",'เมนูหลัก')}<h1 class="font-bold text-xl flex-1 text-center pr-24">จัดการผู้ใช้</h1></header>
+<div class="px-5 pb-28 space-y-4">
+  <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 flex gap-4"><i class="ph ph-info text-3xl text-blue-600"></i><div><p class="font-semibold text-blue-700 text-lg">Local app accounts</p><p class="text-lg">OPERATOR: view, refresh, dry-run and non-destructive changes. ADMIN: everything, including destructive changes, devices and users. Every action here is written to the audit log.</p></div></div>
+  ${isAdmin()?'':'<p class="text-red-600 px-2">คุณเป็น Operator — ดูรายชื่อได้อย่างเดียว</p>'}
+  ${S.users.map((u,i)=>{const me=u.name===S.user;return `<div class="bg-white rounded-2xl border border-gray-100 p-5 flex items-center gap-5 relative ${u.active?'':'opacity-60'}">
+    <i class="ph ${u.role==='ADMIN'?'ph-user-gear':'ph-user'} text-3xl text-gray-600"></i>
+    <div class="flex-1"><p class="text-xl">${esc(u.name)}${me?' (you)':''}</p>
+      <div class="flex items-center gap-4 mt-2"><span class="text-gray-600 font-medium">${u.role}</span>
+      <span class="px-4 py-1.5 rounded-lg border flex items-center gap-2 ${u.active?'border-green-600 text-green-700':'border-gray-400 text-gray-500'}"><i class="ph ${u.active?'ph-check-circle':'ph-prohibit'}"></i>${u.active?'Active':'Disabled'}</span>
+      <span class="text-gray-500">since ${u.since}</span>
+      ${(n=>n?`<span class="text-sm text-blue-700 bg-blue-50 rounded-full px-3 py-1 flex items-center gap-1.5"><i class="ph ph-device-mobile"></i>${n} session</span>`:'')(S.sessions.filter(x=>x.user===u.name).length)}</div></div>
+    ${me?'<i class="ph ph-lock-simple text-3xl text-gray-600" title="แก้บัญชีตัวเองผ่าน เปลี่ยนรหัสผ่าน"></i>':
+      `<button ${isAdmin()?`onclick="S.userMenu=S.userMenu===${i}?null:${i};render()"`:'disabled'} class="text-2xl ${isAdmin()?'':'text-gray-300'}"><i class="ph-bold ph-dots-three-vertical"></i></button>`}
+    ${S.userMenu===i?`<div class="fixed inset-0 z-20" onclick="S.userMenu=null;render()"></div><div class="absolute right-12 top-6 z-30 bg-white rounded-lg shadow-xl w-60 py-2 pop">
+      <button onclick="userAct(${i},'role')" class="w-full text-left px-5 py-3 hover:bg-gray-50 flex gap-3"><i class="ph ph-user-switch text-xl"></i>เปลี่ยนเป็น ${u.role==='ADMIN'?'OPERATOR':'ADMIN'}</button>
+      <button onclick="userAct(${i},'reset')" class="w-full text-left px-5 py-3 hover:bg-gray-50 flex gap-3"><i class="ph ph-key text-xl"></i>รีเซ็ตรหัสผ่าน</button>
+      <button onclick="userAct(${i},'kickall')" class="w-full text-left px-5 py-3 hover:bg-gray-50 flex gap-3"><i class="ph ph-sign-out text-xl"></i>Force logout ทุก session</button>
+      <button onclick="userAct(${i},'toggle')" class="w-full text-left px-5 py-3 hover:bg-gray-50 flex gap-3"><i class="ph ${u.active?'ph-prohibit':'ph-check-circle'} text-xl"></i>${u.active?'ปิดใช้งาน':'เปิดใช้งาน'}</button>
+      <button onclick="userAct(${i},'delete')" class="w-full text-left px-5 py-3 hover:bg-gray-50 flex gap-3 text-red-600"><i class="ph ph-trash text-xl"></i>ลบผู้ใช้</button></div>`:''}
+  </div>`}).join('')}
+  <div class="flex justify-between items-end pt-4 px-1"><h3 class="text-xl font-bold">Active sessions (${S.sessions.length})</h3><span class="text-sm text-gray-500">session หมดอายุอัตโนมัติใน 7 วัน</span></div>
+  <div class="bg-white rounded-2xl border border-gray-100 divide-y">${S.sessions.map(x=>`<div class="p-5 flex items-center gap-5">
+    <i class="ph ${x.device.startsWith('Tablet')?'ph-device-tablet':'ph-device-mobile'} text-3xl text-gray-600"></i>
+    <div class="flex-1 min-w-0"><p class="text-lg"><b>${esc(x.user)}</b> · ${esc(x.device)} ${x.me?'<span class="text-xs bg-green-100 text-green-700 rounded-full px-2 py-0.5 ml-1">เครื่องนี้</span>':''}</p>
+      <p class="text-gray-500 text-sm">${x.ip} · เข้าสู่ระบบ ${x.since} · ใช้งานล่าสุด ${x.last}</p>
+      ${x.job?`<p class="text-sm text-orange-700 flex items-center gap-1.5 mt-0.5"><i class="ph ph-lock-simple"></i>${x.job}</p>`:''}</div>
+    ${x.me?'<span class="text-sm text-gray-400">ใช้ "ออกจากระบบ"</span>':
+      `<button ${isAdmin()?`onclick="S.form={reason:''};S.modal={type:'kick',id:${x.id}};render()"`:'disabled'} class="px-5 py-2 rounded-xl border font-medium flex items-center gap-2 ${isAdmin()?'border-red-300 text-red-600 hover:bg-red-50':'border-gray-200 text-gray-300'}"><i class="ph ph-sign-out"></i>Kick</button>`}
+  </div>`).join('')||'<p class="p-6 text-gray-400 text-center">ไม่มี session ที่ใช้งานอยู่</p>'}</div>
+</div>
+<button onclick="${isAdmin()?"S.form={role:'OPERATOR'};S.modal={type:'addUser'};render()":"snack('เพิ่มผู้ใช้ต้องเป็น Admin','err')"}" class="absolute bottom-6 right-6 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 rounded-2xl px-6 py-4 shadow-lg text-lg flex items-center gap-3"><i class="ph ph-user-plus text-2xl"></i>Add user</button>`;
+
+/* ---------- Diagnostics: show / ping / traceroute (output generated from current state) ---------- */
+const col=(v,w)=>String(v).padEnd(w).slice(0,w);
+const pstat=p=>!p.admin?'disabled':p.errdis?'err-disabled':p.up?'connected':'notconnect';
+const macOf=(i,k=1)=>`5254.00${pad(i)}.${String(k).padStart(2,'0')}a${i}`;
+const CDP={'Gi0/0':['R1-gateway','192.168.1.1','GigabitEthernet0/1','Cisco IOSv Router'],'Gi0/2':['core-sw1','192.168.1.2','GigabitEthernet1/0/24','Cisco IOSvL2'],'Gi0/3':['dist-sw2','192.168.1.3','GigabitEthernet0/1','Cisco IOSvL2'],'Gi0/4':['dist-sw3','192.168.1.4','GigabitEthernet0/1','Cisco IOSvL2'],'Gi0/5':['dist-sw4','192.168.1.5','GigabitEthernet0/1','Cisco IOSvL2']};
+function portCfg(p){const L=[I(p)];
+  if(p.desc)L.push(` description ${p.desc}`);
+  if(p.mode==='trunk'){L.push(' switchport trunk encapsulation dot1q');if(p.native!==1)L.push(` switchport trunk native vlan ${p.native}`);if(p.allowed)L.push(` switchport trunk allowed vlan ${fmtList(p.allowed)}`);L.push(' switchport mode trunk')}
+  else{if(p.vlan!==1)L.push(` switchport access vlan ${p.vlan}`);L.push(' switchport mode access');if(p.voice!=null)L.push(` switchport voice vlan ${p.voice}`)}
+  if(p.ps){L.push(' switchport port-security',...(p.ps.max>1?[` switchport port-security maximum ${p.ps.max}`]:[]),...(p.ps.viol!=='shutdown'?[` switchport port-security violation ${p.ps.viol}`]:[]),...(p.ps.sticky?[' switchport port-security mac-address sticky']:[]))}
+  if(p.speed!=='auto')L.push(` speed ${p.speed}`);if(p.duplex!=='auto')L.push(` duplex ${p.duplex}`);
+  L.push(' negotiation auto');if(p.ch)L.push(` channel-group ${p.ch} mode ${(S.channels.find(c=>c.g===p.ch)||{}).mode||'active'}`);
+  if(p.portfast)L.push(' spanning-tree portfast');if(p.bpdu)L.push(' spanning-tree bpduguard enable');if(!p.admin)L.push(' shutdown');return L}
+function showRun(){const L=['Building configuration...','','Current configuration : 3412 bytes','!','version 15.2','service timestamps log datetime msec','service password-encryption','!','hostname s1','!','username netops privilege 15 secret 5 ********','!'];
+  if(S.ipRouting)L.push('ip routing','!');
+  S.vlans.filter(v=>!RESERVED.includes(v.id)).forEach(v=>L.push(`vlan ${v.id}`,` name ${v.name}`,'!'));
+  if(S.errRec.causes.length)L.push(...S.errRec.causes.map(c=>`errdisable recovery cause ${c}`),...(S.errRec.interval!==300?[`errdisable recovery interval ${S.errRec.interval}`]:[]),'!');
+  S.channels.forEach(c=>L.push(`interface Port-channel${c.g}`,' switchport mode access','!'));
+  S.ports.forEach(p=>L.push(...portCfg(p),'!'));
+  S.svis.forEach(s=>{L.push(`interface Vlan${s.vlan}`,` ip address ${s.ip} ${s.mask}`,...S.hsrp.filter(h=>h.vlan===s.vlan).flatMap(h=>[` standby ${h.grp} ip ${h.vip}`,...(h.prio!==100?[` standby ${h.grp} priority ${h.prio}`]:[]),...(h.pre?[` standby ${h.grp} preempt`]:[])]));if(!s.up)L.push(' shutdown');L.push('!')});
+  [...new Set(S.ospf.map(o=>o.pid))].forEach(pid=>L.push(`router ospf ${pid}`,...S.ospf.filter(o=>o.pid===pid).map(o=>` network ${o.net} ${o.wild} area ${o.area}`),'!'));
+  L.push(`ip default-gateway ${S.gw}`,...S.routes.map(r=>`ip route ${r.net} ${r.mask} ${r.nh}`),'ip ssh version 2','!','line vty 0 4',' login local',' transport input ssh','!','end');return L.join('\n')}
+function reach(ip){const conn=S.svis.find(s=>s.up&&inNet(ip,s.ip,s.mask));if(conn)return {ok:ip!=='192.168.1.99',hops:[ip]};
+  const priv=/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+  if(S.ipRouting){const rt=S.routes.filter(r=>inNet(ip,r.net,r.mask)).sort((a,b)=>pfx(b.mask)-pfx(a.mask))[0];if(!rt)return {ok:false,hops:[],why:'no route'};return {ok:priv,hops:[rt.nh,...(priv?[ip]:[])]}}
+  return {ok:priv,hops:[S.gw,...(priv?[ip]:[])]}}
+const SH=[
+  ['version','show version',null,()=>`Cisco IOS Software, vios_l2 Software (vios_l2-ADVENTERPRISEK9-M), Version 15.0(TTC_20140605)FLO_DSGS7\ns1 uptime is 3 weeks, 1 day, 4 hours, 12 minutes\nSystem image file is "flash0:/vios_l2-adventerprisek9-m"\nProcessor board ID 9XJ2K7QWPLA\n8 Gigabit Ethernet interfaces\nConfiguration register is 0x101`],
+  ['run','show running-config',null,showRun],
+  ['runif','show running-config interface',{t:'iface'},a=>portCfg(S.ports[+a]).join('\n')],
+  ['ipbr','show ip interface brief',null,()=>[col('Interface',23)+col('IP-Address',16)+'OK? Method Status                Protocol',...S.ports.map(p=>col(longName(p.n),23)+col('unassigned',16)+'YES unset  '+col(p.admin?(p.up?'up':'down'):'administratively down',22)+(p.up&&p.admin?'up':'down')),...S.channels.map(c=>col('Port-channel'+c.g,23)+col('unassigned',16)+'YES unset  '+col('up',22)+'up'),...S.svis.map(s=>col('Vlan'+s.vlan,23)+col(s.ip,16)+'YES NVRAM  '+col(s.up?'up':'administratively down',22)+(s.up?'up':'down'))].join('\n')],
+  ['status','show interfaces status',null,()=>[col('Port',10)+col('Name',19)+col('Status',13)+col('Vlan',11)+col('Duplex',7)+col('Speed',7)+'Type',...S.ports.map(p=>col(p.n,10)+col(p.desc,19)+col(pstat(p),13)+col(p.mode==='trunk'?'trunk':p.vlan,11)+col(p.duplex==='auto'?'a-full':p.duplex,7)+col(p.speed==='auto'?'a-1000':p.speed,7)+'RJ45')].join('\n')],
+  ['intf','show interfaces',{t:'iface'},a=>{const p=S.ports[+a],i=+a,z=S.ctrClear[p.n],up=p.up&&p.admin;
+    return `${longName(p.n)} is ${!p.admin?'administratively down':up?'up':'down'}, line protocol is ${up?'up (connected)':'down ('+pstat(p)+')'}\n  Hardware is iGbE, address is ${macOf(i,0)} (bia ${macOf(i,0)})\n${p.desc?`  Description: ${p.desc}\n`:''}  MTU 1500 bytes, BW 1000000 Kbit/sec, DLY 10 usec\n  ${up?'Full-duplex, 1000Mb/s':'Auto-duplex, Auto-speed'}, media type is RJ45\n  Last clearing of "show interface" counters ${z?'00:00:12':'never'}\n  5 minute input rate ${up?(z?0:1200+i*317):0} bits/sec, ${up?(z?0:2+i):0} packets/sec\n     ${z?0:up?182340+i*9001:0} packets input, ${z?0:up?24918230+i*77001:0} bytes, 0 no buffer\n     ${z?0:p.n==='Gi0/6'?17:0} input errors, ${z?0:p.n==='Gi0/6'?17:0} CRC, 0 frame, 0 overrun, 0 ignored\n     ${z?0:up?95120+i*4441:0} packets output, ${z?0:up?11290811+i*50003:0} bytes, 0 underruns\n     0 output errors, 0 collisions, ${z?0:1} interface resets`}],
+  ['vlan','show vlan brief',null,()=>[col('VLAN',5)+col('Name',33)+col('Status',10)+'Ports','---- -------------------------------- --------- -------------------------------',...S.vlans.map(v=>col(v.id,5)+col(v.name,33)+col(v.st||'active',10)+S.ports.filter(p=>p.mode==='access'&&!p.ch&&p.vlan===v.id).map(p=>p.n).concat(S.channels.filter(c=>S.ports.find(p=>p.n===c.members[0]).vlan===v.id).map(c=>'Po'+c.g)).join(', '))].join('\n')],
+  ['trunk','show interfaces trunk',null,()=>{const T=S.ports.filter(p=>p.mode==='trunk');if(!T.length)return '(ไม่มีพอร์ต trunk)';const all=S.vlans.filter(v=>v.id<1002).map(v=>v.id);
+    return [col('Port',10)+col('Mode',13)+col('Encapsulation',15)+col('Status',14)+'Native vlan',...T.map(p=>col(p.n,10)+col('on',13)+col('802.1q',15)+col(p.up&&p.admin?'trunking':'not-trunking',14)+p.native),'',col('Port',10)+'Vlans allowed on trunk',...T.map(p=>col(p.n,10)+(p.allowed?fmtList(p.allowed):'1-4094')),'',col('Port',10)+'Vlans allowed and active in management domain',...T.map(p=>col(p.n,10)+fmtList((p.allowed||all).filter(x=>all.includes(x))))].join('\n')}],
+  ['mac','show mac address-table',{t:'iface',opt:1},a=>{const rows=[];const fresh=S.macCleared&&Date.now()-S.macCleared<4000;
+    S.ports.forEach((p,i)=>{if(!(p.up&&p.admin))return;
+      if(p.mode==='trunk'){if(fresh)return;S.vlans.filter(v=>v.id<1002&&(!p.allowed||p.allowed.includes(v.id))).forEach((v,k)=>rows.push([v.id,macOf(i,k+2),'DYNAMIC',p.n]))}
+      else{if(p.ps&&p.ps.sticky)rows.push([p.vlan,macOf(i,1),'STATIC',p.n]);else if(!fresh)rows.push([p.vlan,macOf(i,1),'DYNAMIC',p.n])}});
+    const f=a!==''&&a!=null?rows.filter(r=>r[3]===S.ports[+a].n):rows;
+    return ['          Mac Address Table','-------------------------------------------','',col('Vlan',8)+col('Mac Address',18)+col('Type',12)+'Ports','----    -----------       --------    -----',...f.map(r=>col(r[0],8)+col(r[1],18)+col(r[2],12)+r[3]),`Total Mac Addresses for this criterion: ${f.length}`].join('\n')}],
+  ['cdp','show cdp neighbors detail',null,()=>S.ports.filter(p=>CDP[p.n]&&p.up&&p.admin).map(p=>{const[d,ip,port,plat]=CDP[p.n];return `-------------------------\nDevice ID: ${d}\nEntry address(es):\n  IP address: ${ip}\nPlatform: ${plat},  Capabilities: ${d.startsWith('R')?'Router':'Switch IGMP'}\nInterface: ${longName(p.n)},  Port ID (outgoing port): ${port}\nHoldtime : 142 sec\nNative VLAN: ${p.native||1}\nDuplex: full`}).join('\n')||'(ไม่พบ neighbor)'],
+  ['stp','show spanning-tree vlan',{t:'vlan'},a=>{const v=+a,mem=S.ports.filter(p=>p.up&&p.admin&&(p.mode==='trunk'?(!p.allowed||p.allowed.includes(v)):p.vlan===v));
+    if(!S.vlans.some(x=>x.id===v))return `Spanning tree instance(s) for vlan ${v} does not exist.`;
+    return [`VLAN${String(v).padStart(4,'0')}`,'  Spanning tree enabled protocol rstp',`  Root ID    Priority    ${32768+v}`,'             Address     5254.0002.0000','             Cost        4',`             Port        3 (GigabitEthernet0/2)`,`  Bridge ID  Priority    ${32768+v}  (priority 32768 sys-id-ext ${v})`,'             Address     5254.0000.0050','',col('Interface',20)+col('Role',5)+col('Sts',4)+col('Cost',10)+col('Prio.Nbr',9)+'Type','------------------- ---- --- --------- -------- --------------------------------',...mem.map((p,i)=>col(p.n,20)+col(p.n==='Gi0/2'?'Root':'Desg',5)+col('FWD',4)+col(4,10)+col('128.'+(S.ports.indexOf(p)+1),9)+(p.portfast?'P2p Edge':'P2p'))].join('\n')}],
+  ['ec','show etherchannel summary',null,()=>['Flags:  D - down        P - bundled in port-channel','        I - stand-alone s - suspended','        S - Layer2      U - in use      SD - waiting for partner','',`Number of channel-groups in use: ${S.channels.length}`,`Number of aggregators:           ${S.channels.length}`,'',col('Group',7)+col('Port-channel',14)+col('Protocol',10)+'Ports','------+-------------+-----------+-----------------------------------------------',...S.channels.map(c=>{const mem=c.members.map(n=>S.ports.find(p=>p.n===n));const up=mem.filter(p=>p.up&&p.admin);return col(c.g,7)+col(`Po${c.g}(${up.length?'SU':'SD'})`,14)+col(c.mode==='on'?'-':'LACP',10)+mem.map(p=>`${p.n}(${p.up&&p.admin?'P':'D'})`).join(' ')})].join('\n')],
+  ['hsrp','show standby brief',null,()=>S.hsrp.length?['                     P indicates configured to preempt.','                     |',col('Interface',11)+col('Grp',5)+col('Pri',4)+col('P',2)+col('State',9)+col('Active',16)+col('Standby',16)+'Virtual IP',...S.hsrp.map(h=>{const s=S.svis.find(x=>x.vlan===h.vlan);const act=h.prio>=100;return col('Vl'+h.vlan,11)+col(h.grp,5)+col(h.prio,4)+col(h.pre?'P':'',2)+col(act?'Active':'Standby',9)+col(act?'local':netOf(s.ip,s.mask).replace(/\d+$/,'2'),16)+col(act?netOf(s.ip,s.mask).replace(/\d+$/,'2'):'local',16)+h.vip})].join('\n'):'(ไม่มี HSRP group)'],
+  ['route','show ip route',null,()=>{if(!S.ipRouting)return `Default gateway is ${S.gw}\n\nHost               Gateway           Last Use    Total Uses  Interface\nICMP redirect cache is empty`;
+    const d=S.routes.find(r=>r.net==='0.0.0.0');return ['Codes: L - local, C - connected, S - static, O - OSPF','',`Gateway of last resort is ${d?d.nh+' to network 0.0.0.0':'not set'}`,'',...S.routes.filter(r=>r.net==='0.0.0.0').map(r=>`S*    0.0.0.0/0 [1/0] via ${r.nh}`),...S.svis.filter(s=>s.up).flatMap(s=>[`C        ${netOf(s.ip,s.mask)}/${pfx(s.mask)} is directly connected, Vlan${s.vlan}`,`L        ${s.ip}/32 is directly connected, Vlan${s.vlan}`]),...S.routes.filter(r=>r.net!=='0.0.0.0').map(r=>`S        ${r.net}/${pfx(r.mask)} [1/0] via ${r.nh}`)].join('\n')}],
+  ['ospf','show ip ospf neighbor',null,()=>{if(!S.ospf.length)return '%OSPF: No router process is configured';const nb=S.svis.filter(s=>s.vlan!==1&&s.up&&S.ospf.some(o=>inWild(s.ip,o.net,o.wild)));
+    return [col('Neighbor ID',17)+col('Pri',5)+col('State',16)+col('Dead Time',12)+col('Address',17)+'Interface',...nb.map(s=>{const n=netOf(s.ip,s.mask).replace(/\d+$/,'2');return col(n,17)+col(1,5)+col('FULL/DR',16)+col('00:00:35',12)+col(n,17)+'Vlan'+s.vlan})].join('\n')+(nb.length?'':'\n(ยังไม่มี neighbor — ไม่มี SVI ที่อยู่ใน network ที่ประกาศ)')}],
+  ['psec','show port-security',null,()=>{const P=S.ports.filter(p=>p.ps);return [col('Secure Port',12)+col('MaxSecureAddr',14)+col('CurrentAddr',12)+col('SecurityViolation',18)+'Security Action',col('',12)+col('(Count)',14)+col('(Count)',12)+col('(Count)',18),'---------------------------------------------------------------------------',...P.map(p=>col(p.n,12)+col(p.ps.max,14)+col(p.up||p.errdis?1:0,12)+col(p.errdis?1:0,18)+p.ps.viol[0].toUpperCase()+p.ps.viol.slice(1)),'---------------------------------------------------------------------------',`Total Addresses in System (excluding one mac per port)     : 0`,`Max Addresses limit in System (excluding one mac per port) : 4096`].join('\n')}],
+  ['log','show logging | tail',null,()=>{const L=['*Oct 11 21:29:51.102: %SSH-5-ENABLED: SSH 2.0 has been enabled','*Oct 11 22:23:11.448: %SYS-5-CONFIG_I: Configured from console by netops on vty0 (192.168.1.120)'];
+    S.ports.forEach(p=>{if(p.errdis)L.push(`*Nov  2 09:14:07.311: %PM-4-ERR_DISABLE: ${p.errdis} error detected on ${p.n}, putting ${p.n} in err-disable state`,`*Nov  2 09:14:07.315: %PORT_SECURITY-2-PSECURE_VIOLATION: Security violation occurred, caused by MAC address ${macOf(9,9)} on port ${longName(p.n)}.`);
+      else if(!p.up&&p.admin)L.push(`*Nov  2 08:02:44.871: %LINK-3-UPDOWN: Interface ${longName(p.n)}, changed state to down`);
+      if(!p.admin)L.push(`*Nov  2 ${nowStr().slice(11)}.000: %LINK-5-CHANGED: Interface ${longName(p.n)}, changed state to administratively down`)});
+    if(S.reloadAt)L.push(`*Nov  2 ${nowStr().slice(11)}.000: %SYS-5-SCHEDULED_RELOAD: Reload requested for ${S.reloadAt}`);
+    S.unsaved.forEach(u=>L.push(`*${u.at.slice(5).replace('-','/')}.000: %SYS-5-CONFIG_I: Configured from console by netops on vty0 (192.168.1.120)`));return L.join('\n')}],
+  ['ping','ping',{t:'ip'},a=>{const r=reach(a);return `Type escape sequence to abort.\nSending 5, 100-byte ICMP Echos to ${a}, timeout is 2 seconds:\n${r.ok?'!!!!!':'.....'}\nSuccess rate is ${r.ok?'100 percent (5/5), round-trip min/avg/max = 1/2/4 ms':'0 percent (0/5)'}`}],
+  ['trace','traceroute',{t:'ip'},a=>{const r=reach(a);const h=r.hops.length?r.hops:[];const L=['Type escape sequence to abort.',`Tracing the route to ${a}`,'VRF info: (vrf in name/id, vrf out name/id)',...h.map((x,i)=>`  ${i+1} ${x} ${i+1} msec ${i+2} msec ${i+1} msec`)];if(!r.ok)for(let i=h.length;i<h.length+3;i++)L.push(`  ${i+1}  *  *  * `);return L.join('\n')}],
+];
+function tDiag(){const d=S.diag,c=SH.find(x=>x[0]===d.cmd),arg=c[2];
+  const argField=!arg?'':arg.t==='iface'?`<select onchange="S.diag.arg=this.value;render()" class="border border-gray-200 rounded-xl px-4 py-3 bg-white">${arg.opt?`<option value="">ทุกพอร์ต</option>`:''}${S.ports.map((p,i)=>`<option value="${i}" ${String(d.arg)===String(i)?'selected':''}>${p.n}</option>`).join('')}</select>`
+    :arg.t==='vlan'?`<select onchange="S.diag.arg=this.value;render()" class="border border-gray-200 rounded-xl px-4 py-3 bg-white">${S.vlans.filter(v=>v.id<1002).map(v=>`<option value="${v.id}" ${String(d.arg)===String(v.id)?'selected':''}>VLAN ${v.id}</option>`).join('')}</select>`
+    :`<input id="dip" value="${esc(d.arg)}" oninput="S.diag.arg=this.value" placeholder="เช่น 192.168.1.133" class="border border-gray-200 rounded-xl px-4 py-3 font-mono w-56" onkeydown="if(event.key==='Enter')runShow()">`;
+  return `<div class="p-6 space-y-4">
+  <div class="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex gap-3 text-sm"><i class="ph ph-info text-2xl text-blue-600"></i><p>คำสั่งอ่านอย่างเดียว · ทุก role ใช้ได้ · ไม่ต้องขอ Global Lock · แอปแปลงผลด้วย TextFSM เพื่อใช้แสดงผลบนหน้าอื่น · ทุกครั้งที่รันจะบันทึกลง Audit log</p></div>
+  <div class="flex flex-wrap gap-2">${SH.map(([k,l])=>`<button onclick="S.diag.cmd='${k}';S.diag.arg=${SH.find(x=>x[0]===k)[2]?.t==='iface'?(SH.find(x=>x[0]===k)[2].opt?"''":"'1'"):SH.find(x=>x[0]===k)[2]?.t==='vlan'?"'100'":SH.find(x=>x[0]===k)[2]?.t==='ip'?"'192.168.1.133'":"''"};render()" class="px-3 py-1.5 rounded-full text-sm font-mono border ${d.cmd===k?'bg-gray-900 text-white border-gray-900':'bg-white border-gray-200 hover:bg-gray-50'}">${l}</button>`).join('')}</div>
+  <div class="flex flex-wrap items-center gap-3"><span class="font-mono text-lg">s1# ${c[1]}</span>${argField}
+    <button onclick="runShow()" class="ml-auto bg-gray-900 text-white rounded-xl px-6 py-3 font-semibold flex items-center gap-2"><i class="ph ph-play"></i>รัน</button></div>
+  <div class="bg-black rounded-xl p-5 min-h-[260px] max-h-[480px] overflow-auto"><pre class="font-mono text-[13px] leading-5 text-gray-200 whitespace-pre">${d.out?`<span class="text-gray-500">! ${esc(d.at)} · ${esc(d.line)}</span>\n${esc(d.out)}`:'<span class="text-gray-500">เลือกคำสั่งแล้วกด รัน</span>'}</pre></div>
+</div>`}
+function runShow(){const d=S.diag,c=SH.find(x=>x[0]===d.cmd);let a=d.arg;
+  if(!S.deviceOnline){snack('เข้าถึงสวิตช์ไม่ได้ — กด sync ก่อน','err');return}
+  if(c[2]&&c[2].t==='ip'){a=String(a||'').trim();if(!ipOk(a)){snack('IP ไม่ถูกต้อง','err');return}d.arg=a}
+  const argTxt=!c[2]||a===''||a==null?'':c[2].t==='iface'?' '+(c[0]==='mac'?'interface ':'')+longName(S.ports[+a].n):' '+a;
+  d.line=c[1]+argTxt;d.out=c[3](a);d.at=nowStr();
+  sshLog(['>'+d.line,...d.out.split('\n').slice(0,40).map(l=>'<'+l)]);audit(devTarget,'show.run: '+d.line);render()}
+
+/* ===================== OVERLAYS ===================== */
+function overlay(){
+  let h='';
+  if(S.sheet){const pf=S.prefIface;const ks=Object.keys(CAT).filter(k=>pf==null||['iface','access'].includes(k)||(CAT[k].fields||[]).some(f=>f[1]==='iface'));
+    h+=`<div class="absolute inset-0 z-30 bg-black/50 flex items-end justify-center" onclick="if(event.target===this){S.sheet=false;S.prefIface=null;render()}">
+    <div class="sheet bg-appBg rounded-t-[28px] w-full max-w-3xl px-8 pt-4 pb-8 max-h-[88%] overflow-y-auto">
+      <div class="w-12 h-1 bg-gray-500 rounded-full mx-auto mb-5"></div>
+      <h3 class="text-xl font-bold">เพิ่มบล็อก${pf!=null?' · '+S.ports[pf].n:''}</h3><p class="text-sm text-gray-500 mb-1">ทุกบล็อกผ่าน Dry-Run → Pipeline (Snapshot · Verify · Auto-Rollback) ก่อนถึงสวิตช์</p>
+      ${GROUPS.map(([g,gl])=>{const items=ks.filter(k=>CAT[k].g===g);if(!items.length)return '';
+        return `<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-5 mb-1">${gl}</p><div class="grid sm:grid-cols-2 gap-1">${items.map(k=>{const E=CAT[k],lock=E.admin&&!isAdmin();
+          return `<button ${lock?'disabled':`onclick="S.prefIface=null;openBlk('${k}'${pf!=null?','+pf:''})"`} class="flex items-center gap-4 p-2.5 text-left rounded-xl ${lock?'opacity-45':'hover:bg-black/[.04]'}"><span class="w-12 h-12 rounded-full grid place-items-center shrink-0 ${E.cl}"><i class="ph ${E.ic} text-2xl"></i></span><div class="min-w-0"><p class="font-semibold flex flex-wrap items-center gap-1.5">${E.t}${E.admin?'<span class="text-[10px] border border-gray-300 rounded px-1.5 text-gray-500">ADMIN</span>':''}${E.net?'<span class="text-[10px] bg-red-50 text-red-600 rounded px-1.5">เสี่ยงสูง</span>':''}</p><p class="text-sm text-gray-500 truncate">${E.d}</p></div></button>`}).join('')}</div>`}).join('')}
+      ${pf==null?`<details class="mt-6 border-t border-gray-200 pt-4"><summary class="cursor-pointer text-gray-500"><i class="ph ph-prohibit"></i> คำสั่งที่แอปไม่รองรับโดยเจตนา (${BLOCKED.length})</summary><div class="mt-3 space-y-1.5 text-sm">${BLOCKED.map(([c,w])=>`<p><span class="font-mono text-red-600">${c}</span> — <span class="text-gray-500">${w}</span></p>`).join('')}<p class="text-gray-500 pt-1">คำสั่ง show / ping / traceroute อยู่ที่แท็บ Diagnostics ของหน้าอุปกรณ์</p></div></details>`:''}
+    </div></div>`}
+  if(S.modal)h+=modalHtml();
+  if(S.snack){const k={ok:'bg-emerald-500',err:'bg-red-500',info:'bg-gray-800'}[S.snack.kind];
+    h+=`<div class="absolute bottom-28 left-1/2 -translate-x-1/2 z-50 ${k} text-white rounded-xl shadow-lg px-5 py-3 flex items-center gap-2 pop max-w-[90%]"><i class="ph-bold ${S.snack.kind==='err'?'ph-x':S.snack.kind==='info'?'ph-info':'ph-check'}"></i>${esc(S.snack.msg)}</div>`}
+  return h;
+}
+
+function modalWrap(inner,closable=true,w='max-w-xl'){return `<div class="absolute inset-0 z-40 bg-black/50 grid place-items-center p-4" ${closable?'onclick="if(event.target===this)closeModal()"':''}><div class="pop bg-white rounded-[28px] w-full ${w} p-8 shadow-2xl max-h-full overflow-y-auto">${inner}</div></div>`}
+const modalFoot=(fn,label='บันทึก',cancel='ยกเลิก')=>`${S.form.err?`<p class="text-red-600 text-sm mt-3">${esc(S.form.err)}</p>`:''}<div class="text-right mt-6 mb-4"><button onclick="closeModal()" class="text-gray-600 px-4 py-2">${cancel}</button></div><button onclick="${fn}" class="w-full bg-primary hover:bg-blue-700 text-white rounded-2xl py-4 text-lg font-semibold">${label}</button>`;
+const portSelect=key=>`<select onchange="S.form.${key}=+this.value;render()" class="w-full border border-[#EDE6D3] rounded-2xl px-5 py-4 text-base bg-white">${S.ports.map((p,i)=>`<option value="${i}" ${S.form[key]===i?'selected':''}>${p.n} · vlan ${p.vlan} · ${p.admin?'up':'down'}${p.tag?' · '+TAG[p.tag].l:''}</option>`).join('')}</select>`;
+function portNote(i){const p=S.ports[i];
+  if(p.tag==='MGMT')return `<p class="text-red-600 text-sm mt-2 flex gap-1.5"><i class="ph ph-lock-simple mt-0.5"></i>${MGMT_REASON} — Dry-Run จะปฏิเสธ</p>`;
+  if(p.tag)return `<p class="text-orange-700 text-sm mt-2 flex gap-1.5"><i class="ph ph-shield-warning mt-0.5"></i>PROTECTED uplink: ADMIN confirmation required${isAdmin()?'':' — คุณเป็น Operator'}</p>`;return ''}
+
+function modalHtml(){
+  const m=S.modal, f=S.form;
+  if(m.type==='vlan'){
+    let body=input('vlan','VLAN ID','number');
+    if(f.mode==='create')body+=`<div class="mt-4">${input('name','ชื่อ VLAN (ไม่บังคับ)')}</div>`;
+    if(f.mode==='rename')body+=`<div class="mt-4">${input('name','ชื่อใหม่')}</div>`;
+    if(f.mode==='delete')body+=`<p class="text-red-600 mt-4">การลบ VLAN เป็นคำสั่งอันตราย: ต้องเป็น Admin และพิมพ์ชื่ออุปกรณ์ยืนยันตอน Apply</p>`;
+    return modalWrap(`<h2 class="text-3xl mb-6">บล็อก VLAN</h2><div class="mb-5">${seg([['create','สร้าง'],['rename','เปลี่ยนชื่อ'],['delete','ลบ']],f.mode,'setVlanMode')}</div>${body}${modalFoot('saveVlan()')}`);
+  }
+  if(m.type==='access'){
+    const opts=S.vlans.filter(v=>v.id<1002).map(v=>`<option value="${v.id}" ${f.vlan===v.id?'selected':''}>VLAN ${v.id} - ${esc(v.name)}</option>`).join('');
+    const pend=S.blocks.filter(b=>b.kind==='vlan'&&b.op==='create'&&!S.vlans.some(v=>v.id===b.vlan)).map(b=>`<option value="${b.vlan}" ${f.vlan===b.vlan?'selected':''}>VLAN ${b.vlan} - ${esc(b.name||'(ใหม่ในชุดบล็อก)')}</option>`).join('');
+    return modalWrap(`<h2 class="text-3xl mb-6">บล็อก Access Port VLAN</h2>
+      <label class="text-sm text-gray-500 mb-1 block">อินเทอร์เฟซ</label>${portSelect('iface')}${portNote(f.iface)}
+      <label class="text-sm text-gray-500 mb-1 mt-4 block">VLAN ปลายทาง</label>
+      <select onchange="S.form.vlan=+this.value" class="w-full border border-[#EDE6D3] rounded-2xl px-5 py-4 text-base bg-white">${opts}${pend}</select>
+      <p class="text-xs text-gray-500 mt-2">คำสั่ง: switchport mode access / switchport access vlan &lt;id&gt;</p>${modalFoot('saveAccess()')}`);
+  }
+  if(m.type==='iface'){
+    return modalWrap(`<h2 class="text-3xl mb-6">บล็อก Interface Up/Down</h2>
+      <label class="text-sm text-gray-500 mb-1 block">อินเทอร์เฟซ</label>${portSelect('iface')}${portNote(f.iface)}
+      <div class="mt-5">${seg([['up','เปิด (no shutdown)'],['down','ปิด (shutdown)']],f.state,'setIfState')}</div>${modalFoot('saveIface()')}`);
+  }
+  if(m.type==='ai'){
+    if(m.loading)return modalWrap(`<h2 class="text-3xl mb-6">🤖 AI Assistant</h2><div class="py-10 text-center text-gray-500"><i class="ph ph-spinner spin text-4xl"></i><p class="mt-3">กำลังแปลงข้อความเป็นบล็อกคอนฟิก…</p></div>`,false);
+    if(m.result)return modalWrap(`<h2 class="text-3xl mb-2">🤖 AI Assistant</h2><p class="text-gray-500 mb-4">ร่างบล็อกให้ ${m.result.length} บล็อก — ยังต้อง Dry-Run และยืนยันเองเสมอ</p>
+      <div class="space-y-2">${m.result.map(b=>`<div class="flex items-center gap-3 border rounded-xl p-3"><span class="w-9 h-9 rounded-full grid place-items-center ${CAT[b.kind].cl}"><i class="ph ${CAT[b.kind].ic}"></i></span><span class="font-medium">${blockText(b)}</span></div>`).join('')}</div>
+      ${(m.notes||[]).map(x=>`<p class="text-sm text-orange-700 mt-3 flex gap-1.5"><i class="ph ph-warning mt-0.5"></i>${esc(x)}</p>`).join('')}
+      ${modalFoot('acceptAI()','เพิ่มลงชุดบล็อก')}`);
+    return modalWrap(`<h2 class="text-3xl mb-4">🤖 AI Assistant</h2><p class="text-gray-500 mb-2">อุปกรณ์: s1</p>
+      <textarea maxlength="1000" oninput="S.form.ai=this.value;$('aic').textContent=this.value.length+'/1000'" rows="3" placeholder="เช่น สร้าง VLAN 30 ชื่อ CCTV แล้วใส่พอร์ต Gi0/1 เข้า VLAN 30" class="w-full border border-[#EDE6D3] rounded-2xl px-5 py-4 text-lg focus:outline-none focus:border-primary">${esc(f.ai)}</textarea>
+      <p id="aic" class="text-right text-sm text-gray-500">${(f.ai||'').length}/1000</p>
+      <div class="flex flex-wrap gap-2 mt-2">${['สร้าง VLAN 30 ชื่อ CCTV แล้วใส่พอร์ต Gi0/1 เข้า VLAN 30','ปิดพอร์ต Gi0/1','port-security Gi0/1 max 2 restrict sticky','Gi0/3 เป็น trunk allowed vlan 1,100,200','SVI vlan 100 ip 10.10.100.1/24 และ HSRP vlan 100 ip 10.10.100.254','ip route 10.20.0.0/16 via 192.168.1.254','ospf 1 network 10.10.100.0/24 area 0','กู้พอร์ต Gi0/6','เปลี่ยน username admin'].map(x=>`<button onclick="S.form.ai='${x}';render()" class="text-xs px-3 py-1.5 rounded-full bg-gray-100 hover:bg-gray-200">${x}</button>`).join('')}</div>
+      ${S.serverOnline?'':'<p class="text-red-600 text-sm mt-3">AI Assistant ทำงานผ่าน NetOps Server — ตอนนี้ติดต่อไม่ได้</p>'}
+      ${modalFoot('askAI()','ถาม AI','ปิด')}`);
+  }
+  if(m.type==='legend')return modalWrap(`<h2 class="text-2xl font-bold mb-4">ความหมายสีและป้าย</h2>
+    <div class="space-y-3">
+      <div class="flex items-center gap-3"><span class="w-10 h-8 rounded-lg bg-[#D1FAE5]"></span>Link Up</div>
+      <div class="flex items-center gap-3"><span class="w-10 h-8 rounded-lg bg-red-50 border border-red-100"></span>Link Down</div>
+      <div class="flex items-center gap-3"><span class="w-10 h-8 rounded-lg bg-gray-200"></span>Administratively down (shutdown)</div>
+      <div class="flex items-center gap-3"><span class="w-10 h-8 rounded-lg bg-gray-900"></span>พอร์ตที่เลือก</div>
+      <div class="flex items-center gap-3">${badge('MGMT')}ล็อกทุกคน — พอร์ตที่แอปใช้คุยกับสวิตช์</div>
+      <div class="flex items-center gap-3">${badge('UPLINK')}${badge('UNKNOWN')}Admin เท่านั้น ต้องพิมพ์ hostname ยืนยัน</div>
+    </div><button onclick="closeModal()" class="w-full mt-6 bg-gray-900 text-white rounded-2xl py-3 font-semibold">เข้าใจแล้ว</button>`);
+  if(m.type==='blk'){const E=CAT[m.kind];return modalWrap(`<div class="flex items-center gap-3 mb-6"><span class="w-12 h-12 rounded-full grid place-items-center shrink-0 ${E.cl}"><i class="ph ${E.ic} text-2xl"></i></span><div><h2 class="text-2xl">บล็อก ${E.t}</h2><p class="text-sm text-gray-500">${E.d}</p></div></div>
+    <div class="space-y-4">${E.fields.map(fieldHtml).join('')}</div>
+    ${E.net?`<p class="text-sm text-red-600 mt-4 flex gap-1.5"><i class="ph ph-warning mt-0.5"></i>คำสั่งเสี่ยงสูง — Dry-Run จะ${E.net==='force'?'บังคับ':'แนะนำ'}ตั้ง reload in 10 เป็นตาข่ายกันพลาด</p>`:''}
+    ${modalFoot('blkSave()','เพิ่มบล็อก')}`)}
+  if(m.type==='confirm'){const ok=!m.need||S.form.confirm==='s1';return modalWrap(`<h2 class="text-2xl font-bold mb-3 ${m.red?'text-red-600':''}">${m.title}</h2><div class="text-gray-700">${m.body}</div>
+    ${m.need?`<label class="block text-sm mt-4 mb-2">พิมพ์ hostname <b class="font-mono">s1</b> เพื่อยืนยัน</label><input id="cfx" value="${esc(S.form.confirm)}" oninput="S.form.confirm=this.value;render();const e=$('cfx');e.focus();e.setSelectionRange(e.value.length,e.value.length)" class="w-full font-mono border border-red-300 rounded-xl px-4 py-3 focus:outline-none" placeholder="s1">`:''}
+    <div class="flex gap-3 mt-6"><button onclick="closeModal()" class="flex-1 rounded-2xl py-3 bg-gray-100 font-semibold">ยกเลิก</button><button ${ok?`onclick="${m.fn}"`:'disabled'} class="flex-1 rounded-2xl py-3 font-semibold ${ok?(m.red?'bg-red-600 text-white':'bg-primary text-white'):'bg-gray-200 text-white cursor-not-allowed'}">${m.label}</button></div>`,true,'max-w-md')}
+  if(m.type==='password')return modalWrap(`<h2 class="text-3xl mb-6">Change my password</h2>
+    <div class="space-y-3">${input('cur','Current password','password')}${input('pw','Password (10-128 chars)','password')}${input('pw2','Confirm password','password')}</div>
+    ${modalFoot('changePassword()','Change','Cancel')}`,true,'max-w-md');
+  if(m.type==='addUser')return modalWrap(`<h2 class="text-3xl mb-6">Add user</h2>
+    <div class="space-y-3">${input('name','Username (a-z 0-9 . _ -)')}
+    <div>${seg([['OPERATOR','OPERATOR'],['ADMIN','ADMIN']],f.role,'setUserRole')}</div>
+    ${input('pw','Password (10-128 chars)','password')}${input('pw2','Confirm password','password')}</div>
+    <p class="text-xs text-gray-500 mt-2">${f.role==='ADMIN'?'ADMIN ทำได้ทุกอย่าง รวมถึงคำสั่งอันตราย อุปกรณ์ และผู้ใช้':'OPERATOR: ดู, refresh, dry-run และเปลี่ยนแปลงที่ไม่อันตราย'}</p>
+    ${modalFoot('addUser()','Add','Cancel')}`,true,'max-w-md');
+  if(m.type==='resetPw')return modalWrap(`<h2 class="text-3xl mb-2">Reset password</h2><p class="text-gray-500 mb-5">ผู้ใช้: ${esc(S.users[m.i].name)} · ผู้ใช้จะต้องเปลี่ยนรหัสเมื่อเข้าสู่ระบบครั้งถัดไป</p>
+    <div class="space-y-3">${input('pw','Password (10-128 chars)','password')}${input('pw2','Confirm password','password')}</div>${modalFoot('resetPw()','Reset','Cancel')}`,true,'max-w-md');
+  if(m.type==='addDevice'){
+    if(f.step===2)return modalWrap(`<h2 class="text-3xl mb-2">ยืนยัน host key</h2><p class="text-gray-500 mb-5">เชื่อมต่อ ${esc(f.ip)}:${esc(f.port)} ครั้งแรก — ตรวจ fingerprint กับค่าที่ console ของสวิตช์ (<span class="font-mono">show crypto key mypubkey rsa</span>) ก่อนเชื่อถือ</p>
+      <div class="bg-gray-900 text-green-300 font-mono text-sm rounded-xl p-4 break-all">${f.fp}</div>
+      <p class="text-orange-700 text-sm mt-3 flex gap-1.5"><i class="ph ph-shield-warning mt-0.5"></i>ถ้าภายหลัง host key เปลี่ยน แอปจะปฏิเสธการเชื่อมต่อและแจ้ง Telegram Guard</p>
+      ${modalFoot('trustDevice()','เชื่อถือและเพิ่มอุปกรณ์','ยกเลิก')}`,true,'max-w-lg');
+    if(f.step===1.5)return modalWrap(`<h2 class="text-3xl mb-6">Add device</h2><div class="py-10 text-center text-gray-500"><i class="ph ph-spinner spin text-4xl"></i><p class="mt-3">กำลังขอ host key จาก ${esc(f.ip)}…</p></div>`,false,'max-w-lg');
+    return modalWrap(`<h2 class="text-3xl mb-6">Add device</h2>
+      <div class="grid grid-cols-2 gap-3"><div class="col-span-2">${input('name','ชื่อเรียก (เช่น sw2)')}</div>${input('ip','Management IP')}${input('port','SSH port','number')}
+      ${input('user','SSH user')}${input('pass','SSH password','password')}<div class="col-span-2">${input('loc','ตำแหน่งตู้ (ไม่บังคับ)')}</div></div>
+      <p class="text-xs text-gray-500 mt-2">รหัสผ่านเก็บใน Android Keystore · ไม่ส่งขึ้น NetOps Server</p>
+      ${modalFoot('fetchHostKey()','ถัดไป: ตรวจ host key','Cancel')}`,true,'max-w-lg');
+  }
+  if(m.type==='editDevice')return modalWrap(`<h2 class="text-3xl mb-2">แก้ไขอุปกรณ์</h2><p class="text-gray-500 mb-5">hostname <b>s1</b> และ IP มาจากการยืนยันตัวตนอุปกรณ์ แก้ที่นี่ไม่ได้</p>
+    <div class="space-y-3">${input('alias','ชื่อเรียก (เช่น sw1)')}${input('loc','ตำแหน่งตู้ / ห้อง')}${input('note','หมายเหตุ (ไม่บังคับ)')}</div>${modalFoot('saveEditDevice()')}`,true,'max-w-md');
+  if(m.type==='creds')return modalWrap(`<h2 class="text-3xl mb-2">เปลี่ยน SSH credentials</h2><p class="text-gray-500 mb-5">แอปจะทดสอบ login ก่อนบันทึก · เก็บใน Android Keystore</p>
+    <div class="space-y-3">${input('user','SSH user')}${input('pass','SSH password','password')}${input('enable','Enable secret (ไม่บังคับ)','password')}</div>${modalFoot('saveCreds()','ทดสอบและบันทึก')}`,true,'max-w-md');
+  if(m.type==='rekey'){
+    if(m.loading)return modalWrap(`<h2 class="text-3xl mb-6">ตรวจ host key</h2><div class="py-10 text-center text-gray-500"><i class="ph ph-spinner spin text-4xl"></i><p class="mt-3">กำลังขอ host key จาก 192.168.1.50…</p></div>`,false,'max-w-lg');
+    return modalWrap(`<h2 class="text-3xl mb-4">ตรวจ host key</h2>
+      <div class="space-y-3 font-mono text-sm"><div><p class="font-sans text-gray-500 mb-1">ที่ pin ไว้</p><p class="bg-gray-100 rounded-lg p-3 break-all">SHA256:ISaSsy4B+6lzkZqDZjHIBuFLjFXjQlocrKhoZPxMqsM</p></div>
+      <div><p class="font-sans text-gray-500 mb-1">ที่อุปกรณ์ส่งมาตอนนี้</p><p class="bg-gray-100 rounded-lg p-3 break-all">SHA256:ISaSsy4B+6lzkZqDZjHIBuFLjFXjQlocrKhoZPxMqsM</p></div></div>
+      <div class="mt-4 rounded-xl bg-green-50 text-green-800 p-4 flex gap-2"><i class="ph-fill ph-check-circle text-xl"></i>ตรงกัน — ไม่ต้องเปลี่ยนอะไร</div>
+      <p class="text-xs text-gray-500 mt-3">ถ้าไม่ตรง แอปจะบล็อกการเชื่อมต่อ แจ้ง Telegram Guard และให้ Admin เลือก pin key ใหม่ได้หลังตรวจที่ console เท่านั้น</p>
+      <button onclick="closeModal()" class="w-full mt-5 bg-gray-900 text-white rounded-2xl py-3 font-semibold">ปิด</button>`,true,'max-w-lg');}
+  if(m.type==='qr')return modalWrap(`<h2 class="text-2xl font-bold mb-1">QR Code หน้าตู้</h2><p class="text-gray-500 mb-5">sw1 · ตู้ ${esc(S.loc)} · ไม่มีรหัสผ่านใน QR (มีแค่ device id + host key fingerprint)</p>
+    <div class="mx-auto w-56 h-56 grid grid-cols-[repeat(21,1fr)] p-3 bg-white border rounded-xl">${qrCells()}</div>
+    <p class="text-center font-mono text-xs text-gray-500 mt-3">netscan://device/sw1#SHA256:ISaSsy4B…MqsM</p>
+    <div class="flex gap-3 mt-5"><button onclick="closeModal()" class="flex-1 rounded-2xl py-3 bg-gray-100 font-semibold">ปิด</button><button onclick="snack('ส่งไปเครื่องพิมพ์แล้ว (จำลอง)','info');closeModal()" class="flex-1 rounded-2xl py-3 bg-primary text-white font-semibold">พิมพ์ฉลาก</button></div>`,true,'max-w-md');
+  if(m.type==='delDevice'){const ok=S.form.confirm==='s1';return modalWrap(`<h2 class="text-2xl font-bold mb-2 text-red-600">ลบ sw1 ออกจากแอป?</h2>
+    <p class="text-gray-600">ลบข้อมูลรับรอง SSH, host key ที่ pin ไว้ และ cache ทั้งหมดในเครื่องนี้ · ไม่มีผลกับคอนฟิกบนสวิตช์ · ประวัติใน Audit Trail Log ยังคงอยู่</p>
+    <label class="block text-sm mt-4 mb-2">พิมพ์ hostname <b class="font-mono">s1</b> เพื่อยืนยัน</label>
+    <input id="dc" value="${esc(S.form.confirm)}" oninput="S.form.confirm=this.value;render();const e=$('dc');e.focus();e.setSelectionRange(e.value.length,e.value.length)" class="w-full font-mono border border-red-300 rounded-xl px-4 py-3 focus:outline-none" placeholder="s1">
+    <div class="flex gap-3 mt-6"><button onclick="closeModal()" class="flex-1 rounded-2xl py-3 bg-gray-100 font-semibold">ยกเลิก</button><button ${ok?'onclick="deleteSw1()"':'disabled'} class="flex-1 rounded-2xl py-3 font-semibold ${ok?'bg-red-600 text-white':'bg-red-200 text-white cursor-not-allowed'}">ลบอุปกรณ์</button></div>`,true,'max-w-md')}
+  if(m.type==='kick'){const x=S.sessions.find(z=>z.id===m.id);if(!x)return '';return modalWrap(`<h2 class="text-2xl font-bold mb-2">Kick session ของ ${esc(x.user)}?</h2>
+    <p class="text-gray-600">${esc(x.device)} · ${x.ip} จะถูกบังคับออกจากระบบทันที และต้อง login ใหม่</p>
+    ${x.job?`<div class="mt-4 bg-orange-50 border border-orange-200 rounded-xl p-4 text-orange-800 text-sm flex gap-2"><i class="ph ph-warning text-lg"></i><span>session นี้${x.job} — ถ้ากำลังถือ Global Lock ระบบจะ Rollback งานที่ค้างและตรวจสถานะเดิมก่อนปล่อย lock</span></div>`:''}
+    <div class="mt-4">${input('reason','เหตุผล (บันทึกลง Audit log และแจ้ง Telegram Guard)')}</div>
+    ${S.form.err?`<p class="text-red-600 text-sm mt-2">${esc(S.form.err)}</p>`:''}
+    <div class="flex gap-3 mt-6"><button onclick="closeModal()" class="flex-1 rounded-2xl py-3 bg-gray-100 font-semibold">ยกเลิก</button><button onclick="kickSession(${x.id})" class="flex-1 rounded-2xl py-3 bg-red-500 hover:bg-red-600 text-white font-semibold">Kick</button></div>`,true,'max-w-md')}
+  if(m.type==='disconnect')return modalWrap(`<h2 class="text-2xl font-bold mb-2">ยกเลิกการเชื่อมต่อ NetOps Server?</h2><p class="text-gray-600">หลังยกเลิก การเปลี่ยนคอนฟิกทั้งหมดจะถูกปฏิเสธ (Fail-closed) จนกว่าจะเชื่อมต่อใหม่ แอปยังดูสถานะสวิตช์แบบอ่านอย่างเดียวได้</p>
+    <div class="flex gap-3 mt-6"><button onclick="closeModal()" class="flex-1 rounded-2xl py-3 bg-gray-100 font-semibold">กลับ</button><button onclick="S.serverOnline=false;S.modal=null;snack('ตัดการเชื่อมต่อแล้ว','info')" class="flex-1 rounded-2xl py-3 bg-red-500 text-white font-semibold">ยกเลิกการเชื่อมต่อ</button></div>`);
+  if(m.type==='pipeline'){
+    const ic=s=>s==='done'?'<i class="ph-fill ph-check-circle text-green-600 text-2xl"></i>':s==='run'?'<i class="ph ph-spinner spin text-primary text-2xl"></i>':s==='fail'?'<i class="ph-fill ph-x-circle text-red-600 text-2xl"></i>':s==='rb'?'<i class="ph-fill ph-arrow-counter-clockwise text-orange-600 text-2xl"></i>':'<i class="ph ph-circle text-gray-300 text-2xl"></i>';
+    return modalWrap(`<h2 class="text-2xl font-bold mb-1">Pipeline · s1</h2><p class="text-gray-500 mb-5">${m.done?'เสร็จสิ้น':'กำลังทำงาน — อย่าปิดแอปหรือตัด Wi-Fi'}</p>
+      <div class="space-y-3">${m.steps.map(s=>`<div class="flex items-start gap-3">${ic(s.st)}<div><p class="font-medium ${s.st==='wait'?'text-gray-400':''}">${s.l}</p>${s.d?`<p class="text-xs text-gray-500">${s.d}</p>`:''}</div></div>`).join('')}</div>
+      ${m.done?`<div class="mt-6 rounded-2xl p-4 ${m.ok?'bg-green-50 text-green-800':'bg-orange-50 text-orange-800'}"><p class="font-semibold">${m.ok?'Applied and verified — all post-conditions hold':'Verification failed → Rollback สำเร็จ สถานะกลับเหมือนเดิม'}</p><p class="text-sm">${m.ok?'ยังไม่ได้ save ลง startup-config':'แจ้งเตือนกลุ่ม Admin ผ่าน Telegram Guard แล้ว'}</p></div>
+      <div class="flex gap-3 mt-5"><button onclick="S.modal=null;S.tab='history';go('device')" class="flex-1 rounded-2xl py-3 bg-gray-100 font-semibold">ดูประวัติ</button><button onclick="S.modal=null;go(S.dry.from==='config'?'config':'editor')" class="flex-1 rounded-2xl py-3 bg-primary text-white font-semibold">เสร็จ</button></div>`:''}`,false,'max-w-lg');
+  }
+  return '';
+}
+
+/* ===================== ACTIONS ===================== */
+const $=id=>document.getElementById(id);
+const auditNow=()=>{const d=new Date();return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`};
+function audit(target,cmd,ok=true){S.audit.unshift({at:auditNow(),user:S.user,target,cmd,ok})}
+function sshLog(lines){const t0=nowStr().slice(11);lines.forEach(l=>S.ssh.push({k:l[0],s:l.slice(1),t0}));if(S.ssh.length>400)S.ssh.splice(0,S.ssh.length-400)}
+function openEditDevice(){S.form={alias:S.alias,loc:S.loc,note:S.note};S.modal={type:'editDevice'};render()}
+function saveEditDevice(){const f=S.form;if(!(f.loc||'').trim()){f.err='กรอกตำแหน่งตู้';render();return}if(!(f.alias||'').trim()){f.err='กรอกชื่อเรียก';render();return}
+  S.alias=f.alias.trim();S.loc=f.loc.trim();S.note=(f.note||'').trim();audit('s1 (192.168.1.50)',`device.edit: alias ${S.alias}, location ${S.loc}`);S.modal=null;snack('บันทึกข้อมูลอุปกรณ์แล้ว')}
+function saveCreds(){const f=S.form;if(!f.user||!f.pass){f.err='กรอก SSH user และ password';render();return}
+  if(!S.deviceOnline){f.err='ทดสอบ login ไม่ได้ — เข้าถึง 192.168.1.50 ไม่ได้ (ค่าเดิมยังใช้อยู่)';render();return}
+  sshLog(['!test login '+f.user+'@192.168.1.50 ... ok','>show privilege','<Current privilege level is 15']);audit('s1 (192.168.1.50)','device.credentials: updated (user '+f.user+')');S.modal=null;snack('บันทึก credentials แล้ว')}
+function rekey(){if(!S.deviceOnline){snack('เข้าถึง 192.168.1.50 ไม่ได้ — ตรวจ host key ไม่ได้','err');return}
+  S.modal={type:'rekey',loading:true};render();setTimeout(()=>{audit('s1 (192.168.1.50)','device.hostkey_check: match');S.modal={type:'rekey'};render()},1000)}
+function qrCells(){let h='';for(let y=0;y<21;y++)for(let x=0;x<21;x++){const f=(a,b)=>x>=a&&x<a+7&&y>=b&&y<b+7;let on;
+  const fin=f(0,0)?[0,0]:f(14,0)?[14,0]:f(0,14)?[0,14]:null;
+  if(fin){const dx=x-fin[0],dy=y-fin[1];on=dx===0||dy===0||dx===6||dy===6||(dx>=2&&dx<=4&&dy>=2&&dy<=4)}else on=((x*7+y*13+x*y)%5)<2;
+  h+=`<span class="${on?'bg-gray-900':''}"></span>`}return h}
+function deleteSw1(){audit('s1 (192.168.1.50)','device.delete: credentials and pinned host key removed');S.sw1Removed=true;S.deviceOnline=false;S.modal=null;go('devices');snack('ลบ sw1 แล้ว','info')}
+function restoreSw1(){S.sw1Removed=false;audit('s1 (192.168.1.50)','device.enroll: restored (demo)');render();snack('เพิ่ม sw1 กลับแล้ว (เดโม)')}
+function login(){const u=$('lu').value.trim(),p=$('lp').value;if(!u||!p){$('lerr').textContent='กรอก Username และ Password';return}
+  const acc=S.users.find(x=>x.name===u);if(acc&&!acc.active){$('lerr').textContent='บัญชีนี้ถูกปิดใช้งาน';audit('app','auth.login: account disabled',false);return}
+  S.user=u;S.role=acc&&acc.role==='OPERATOR'?'operator':'admin';audit('app','auth.login: role '+S.role);go('dashboard')}
+function logout(){audit('app','auth.logout');S.menu=false;S.view='login';render()}
+function setUserRole(r){S.form.role=r;render()}
+const pwErr=f=>!f.pw||f.pw.length<10||f.pw.length>128?'รหัสผ่านต้องยาว 10–128 ตัวอักษร':f.pw!==f.pw2?'รหัสผ่านยืนยันไม่ตรงกัน':'';
+function changePassword(){const f=S.form;let e=!f.cur?'กรอกรหัสผ่านปัจจุบัน':pwErr(f)||(f.cur===f.pw?'รหัสใหม่ต้องไม่ซ้ำรหัสเดิม':'');
+  if(e){f.err=e;render();return}audit('app','auth.password_change');dropSessions(S.user);S.modal=null;snack('เปลี่ยนรหัสผ่านแล้ว · session อื่นของคุณถูกออกจากระบบ')}
+function addUser(){const f=S.form,n=(f.name||'').trim().toLowerCase();
+  let e=!/^[a-z0-9._-]{3,32}$/.test(n)?'Username 3–32 ตัว ใช้ได้เฉพาะ a-z 0-9 . _ -':S.users.some(u=>u.name===n)?'มีผู้ใช้นี้แล้ว':pwErr(f);
+  if(e){f.err=e;render();return}S.users.push({name:n,role:f.role,active:true,since:nowStr().slice(0,10)});audit('app',`user.create: ${n} (${f.role})`);S.modal=null;snack('เพิ่มผู้ใช้ '+n+' แล้ว')}
+function userAct(i,a){const u=S.users[i];S.userMenu=null;
+  const admins=S.users.filter(x=>x.role==='ADMIN'&&x.active).length;
+  if((a==='delete'||a==='toggle'&&u.active||a==='role'&&u.role==='ADMIN')&&u.role==='ADMIN'&&admins<=1){snack('ต้องมี ADMIN ที่ใช้งานอยู่อย่างน้อย 1 คน','err');return}
+  if(a==='role'){u.role=u.role==='ADMIN'?'OPERATOR':'ADMIN';audit('app',`user.role: ${u.name} → ${u.role}`);snack(`${u.name} เป็น ${u.role} แล้ว`)}
+  if(a==='kickall'){const n=dropSessions(u.name);audit('app',`session.kick_all: ${u.name} (${n} sessions)`);snack(n?`Force logout ${u.name} แล้ว ${n} session`:`${u.name} ไม่มี session ที่ใช้งานอยู่`,n?'ok':'info');return}
+  if(a==='toggle'&&u.active)dropSessions(u.name);
+  if(a==='delete')dropSessions(u.name);
+  if(a==='toggle'){u.active=!u.active;audit('app',`user.${u.active?'enable':'disable'}: ${u.name}`);snack(`${u.name} ${u.active?'เปิดใช้งาน':'ถูกปิดใช้งาน และถูกออกจากระบบ'}`)}
+  if(a==='reset'){S.form={};S.modal={type:'resetPw',i};render()}
+  if(a==='delete'){audit('app','user.delete: '+u.name);S.users.splice(i,1);snack('ลบผู้ใช้ '+u.name+' แล้ว')}}
+function kickSession(id){const x=S.sessions.find(z=>z.id===id),r=(S.form.reason||'').trim();
+  if(r.length<3){S.form.err='ระบุเหตุผลอย่างน้อย 3 ตัวอักษร';render();return}
+  S.sessions=S.sessions.filter(z=>z!==x);audit('app',`session.kick: ${x.user} @ ${x.device} (${x.ip}) — ${r}`);
+  S.console.push(`[${nowStr().slice(11)}] session ${x.user}@${x.ip} revoked by ${S.user}${x.job?' · pending job rolled back, lock released':''} · telegram notified`);
+  S.modal=null;snack(`Kick ${x.user} (${x.device}) แล้ว`)}
+function dropSessions(name){const n=S.sessions.filter(z=>z.user===name&&!z.me).length;S.sessions=S.sessions.filter(z=>z.user!==name||z.me);return n}
+function resetPw(){const e=pwErr(S.form);if(e){S.form.err=e;render();return}audit('app','user.reset_password: '+S.users[S.modal.i].name);S.modal=null;snack('รีเซ็ตรหัสผ่านแล้ว')}
+function fetchHostKey(){const f=S.form;let e='';
+  if(!(f.name||'').trim())e='กรอกชื่อเรียกอุปกรณ์';
+  else if(!/^(\d{1,3})(\.\d{1,3}){3}$/.test(f.ip||'')||f.ip.split('.').some(x=>+x>255))e='Management IP ไม่ถูกต้อง';
+  else if(f.ip==='192.168.1.50'||S.extraDevices.some(d=>d.ip===f.ip))e='มีอุปกรณ์ IP นี้อยู่แล้ว';
+  else if(!(+f.port>0&&+f.port<65536))e='SSH port ไม่ถูกต้อง';
+  else if(!f.user||!f.pass)e='กรอก SSH user และ password';
+  if(e){f.err=e;render();return}
+  f.err='';f.step=1.5;render();
+  setTimeout(()=>{const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';f.fp='SHA256:'+Array.from({length:43},()=>c[Math.floor(Math.random()*64)]).join('');f.step=2;render()},1200)}
+function trustDevice(){const f=S.form;S.extraDevices.push({name:f.name.trim(),ip:f.ip,port:f.port,user:f.user,loc:f.loc,fp:f.fp});
+  audit(`${f.name} (${f.ip})`,'device.enroll: host key '+f.fp.slice(0,15)+'… pinned');S.modal=null;snack('เพิ่ม '+f.name+' แล้ว · กด sync เพื่ออ่านสถานะ')}
+function removeDevice(i){const d=S.extraDevices.splice(i,1)[0];audit(`${d.name} (${d.ip})`,'device.remove');snack('ลบ '+d.name+' แล้ว','info')}
+function exportCSV(){const q=v=>'"'+String(v).replace(/"/g,'""')+'"';
+  const csv='﻿'+[['time','user','target','command','result'],...S.audit.map(a=>[a.at,a.user,a.target,a.cmd,a.ok?'Success':'Rejected'])].map(r=>r.map(q).join(',')).join('\r\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='netscan-audit-'+nowStr().slice(0,10)+'.csv';a.click();
+  audit('app','audit.export: '+S.audit.length+' rows (CSV)');snack('ส่งออก CSV แล้ว')}
+function toggleRole(){S.role=isAdmin()?'operator':'admin';S.menu=false;snack('สลับเป็น '+(isAdmin()?'Admin':'Operator')+' (จำลอง)','info')}
+function syncDevice(all){if(S.syncing)return;S.syncing=true;render();setTimeout(()=>{S.syncing=false;S.deviceOnline=true;S.lastVerified=nowStr();
+  sshLog(['!connected netops@192.168.1.50:22 · host key SHA256:ISaSsy4B…MqsM ✓','>terminal length 0','>show version | include IOS','<Cisco IOS Software, IOSv Software (VIOS-ADVENTERPRISEK9-M), Version 15.0(TTC_20140605)FLO_DSGS7',
+    '>show vlan brief',...S.vlans.map(v=>'<'+String(v.id).padEnd(5)+v.name.padEnd(33)+v.st),'>show interfaces status',...S.ports.map(p=>'<'+p.n.padEnd(10)+(p.admin?(p.up?'connected':'notconnect'):'disabled').padEnd(13)+String(p.vlan).padEnd(7)+'a-full a-1000'),'>show running-config | include username','<username netops privilege 15 secret ********']);
+  audit('s1 (192.168.1.50)','device.refresh: live state read');
+  snack(all?`ตรวจแล้ว ${1+S.extraDevices.length} เครื่อง · sw1 online${S.extraDevices.length?` · ${S.extraDevices.length} เครื่องยังไม่ยืนยัน`:''}`:'อ่าน live state จาก s1 สำเร็จ · host key ตรงกัน')},1200)}
+function checkServer(){if(S.checking)return;S.checking=true;render();setTimeout(()=>{S.checking=false;S.serverOnline=true;S.console.push(`[${nowStr().slice(11)}] client non@tablet-01 connected (operator)`);snack('ติดต่อ NetOps Server ได้แล้ว')},1300)}
+function openConfig(){const p=S.ports[S.selPort];S.cfg={vlan:p.vlan,admin:p.admin};go('config')}
+function moveBlock(i,d){const b=S.blocks.splice(i,1)[0];S.blocks.splice(i+d,0,b);render()}
+
+function openVlan(mode,id){S.form={mode,vlan:id??'',name:id&&mode==='rename'?vlanName(id):''};S.modal={type:'vlan'};render()}
+function setVlanMode(m){S.form.mode=m;S.form.err='';render()}
+function openAccess(i){S.form={iface:i,vlan:S.ports[i].vlan===100?200:100};S.modal={type:'access'};render()}
+function openIface(i){S.form={iface:i,state:S.ports[i].admin?'down':'up'};S.modal={type:'iface'};render()}
+function setIfState(s){S.form.state=s;render()}
+function addBlock(b){b.id=S.nextId++;b.on=true;S.blocks.push(b);S.modal=null;
+  if(S.view!=='editor'){S.view='editor'}snack('เพิ่มบล็อกแล้ว: '+blockText(b))}
+function saveVlan(){const f=S.form,id=parseInt(f.vlan),ex=S.vlans.some(v=>v.id===id),name=(f.name||'').trim();let e='';
+  if(!id||id<1||id>4094)e='VLAN ID ต้องอยู่ระหว่าง 1–4094';
+  else if(RESERVED.includes(id))e=`VLAN ${id} เป็น VLAN ระบบ แก้ไข/ลบไม่ได้`;
+  else if(f.mode==='create'&&ex)e=`VLAN ${id} มีอยู่แล้ว`;
+  else if(f.mode!=='create'&&!ex)e=`ไม่พบ VLAN ${id} บนสวิตช์`;
+  else if(f.mode==='rename'&&!name)e='กรอกชื่อใหม่';
+  else if(name&&!/^[A-Za-z0-9_-]{1,32}$/.test(name))e='ชื่อใช้ได้เฉพาะ A-Z a-z 0-9 _ - ไม่เกิน 32 ตัว';
+  else if(f.mode==='delete'&&!isAdmin())e='การลบ VLAN ต้องเป็น Admin';
+  if(e){f.err=e;render();return}
+  addBlock({kind:'vlan',op:f.mode,vlan:id,name})}
+function saveAccess(){addBlock({kind:'access',iface:S.form.iface,vlan:S.form.vlan})}
+function saveIface(){addBlock({kind:'iface',iface:S.form.iface,state:S.form.state})}
+
+function openAI(){S.form={ai:''};S.modal={type:'ai'};render()}
+function askAI(){if(!S.serverOnline){snack('AI Assistant ต้องเชื่อมต่อ NetOps Server','err');return}
+  let t=' '+(S.form.ai||'')+' ';const out=[],notes=[];
+  const IP='(\\d{1,3}(?:\\.\\d{1,3}){3})',G='gi(?:gabitethernet)?\\s*0\\/(\\d)',sp='\\s*';
+  const eat=(re,fn)=>{t=t.replace(new RegExp(re,'ig'),(...a)=>{fn(a);return ' '})};
+  const port=x=>{const n=+x;return n>=0&&n<8?n:null};
+  const mask=(m1,m2)=>m2?m2:m1!=null?pfx2mask(+m1):'255.255.255.0';
+  // ⛔ refused on purpose
+  const bad=t.match(/(username|enable\s*secret|\baaa\b|line\s*vty|ip\s*ssh|crypto\s*key|erase|delete\s*flash|\bformat\b|boot\s*system|\bdebug\b|hostname)/i);
+  if(bad){notes.push(`⛔ ไม่รองรับ "${bad[1]}" โดยเจตนา — คำสั่งนี้อาจทำให้แอปเข้าสวิตช์ไม่ได้หรือทำลายข้อมูล`);t=t.replace(new RegExp(bad[1],'ig'),' ')}
+  if(/\bshow\b|\bping\b|traceroute/i.test(t))notes.push('คำสั่ง show / ping / traceroute ใช้ที่แท็บ Diagnostics ของหน้าอุปกรณ์ (ไม่ต้องสร้างบล็อก)');
+  if(/save|write\s*mem|บันทึกถาวร/i.test(t))notes.push('การบันทึกถาวร (write memory) อยู่ที่ Device Actions — ทำหลัง Apply สำเร็จ');
+  if(/reload|รีโหลด|รีสตาร์ต|reboot/i.test(t))notes.push('Reload / reload in อยู่ที่ Device Actions (ต้องยืนยันด้วย hostname)');
+  // trunk
+  eat(`(?:เอา|ลบ|remove)${sp}vlan${sp}([\\d,\\-\\s]+?)${sp}(?:ออกจาก|from)${sp}trunk${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[2]);if(i!=null)out.push({kind:'trunk',iface:i,op:'remove',list:parseList(a[1]),native:1,avlan:1})});
+  eat(`(?:เพิ่ม|add)${sp}vlan${sp}([\\d,\\-\\s]+?)${sp}(?:เข้า|ใน|to|into)${sp}trunk${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[2]);if(i!=null)out.push({kind:'trunk',iface:i,op:'add',list:parseList(a[1]),native:1,avlan:1})});
+  eat(`(?:native${sp}vlan)${sp}(\\d+)${sp}(?:ที่|บน|on)?${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[2]);if(i!=null)out.push({kind:'trunk',iface:i,op:'native',list:[],native:+a[1],avlan:1})});
+  eat(`(?:พอร์ต|port)?${sp}${G}${sp}(?:เป็น|to|=)${sp}trunk(?:[^\\d\\n]{0,25}?(?:allowed|อนุญาต|ให้ผ่าน)?${sp}vlan${sp}([\\d,\\-]+(?:\\s*,\\s*[\\d\\-]+)*))?`,a=>{const i=port(a[1]);if(i!=null)out.push({kind:'trunk',iface:i,op:'to-trunk',list:parseList(a[2]),native:1,avlan:1})});
+  // EtherChannel
+  eat(`(?:etherchannel|port-?channel|lacp|รวมพอร์ต)${sp}(\\d+)?[^\\n]*?${G}${sp}(?:กับ|และ|,|and|\\+)${sp}${G}`,a=>{const i=port(a[2]),k=port(a[3]);if(i!=null&&k!=null)out.push({kind:'etherchannel',iface:i,iface2:k,group:+(a[1]||1),mode:'active'})});
+  // HSRP / OSPF / routes / SVI / gateway
+  eat(`hsrp${sp}(?:group${sp})?(\\d+)?${sp}(?:บน|on|ที่)?${sp}vlan${sp}(\\d+)${sp}(?:vip|virtual${sp}ip|ip)?${sp}${IP}(?:[^\\d\\n]{0,15}(?:priority|prio)${sp}(\\d+))?`,a=>out.push({kind:'hsrp',op:'set',vlan:+a[2],grp:+(a[1]||1),vip:a[3],prio:+(a[4]||110),pre:true}));
+  eat(`ospf${sp}(\\d+)?${sp}(?:network)?${sp}${IP}${sp}(?:\\/${sp}(\\d{1,2})|\\s+${IP})?${sp}area${sp}(\\d+)`,a=>{const w=a[3]!=null?n2ip((~ip2n(pfx2mask(+a[3])))>>>0):a[4]||'0.0.0.255';out.push({kind:'ospf',op:'add',pid:+(a[1]||1),net:a[2],wild:w,area:+a[5]})});
+  eat(`(?:static${sp}route|ip${sp}route|เส้นทาง)${sp}${IP}${sp}(?:\\/${sp}(\\d{1,2})|\\s+${IP})${sp}(?:via|ผ่าน|next-?hop)?${sp}${IP}`,a=>{const m=mask(a[2],a[3]);out.push({kind:'route',op:'add',net:netOf(a[1],m),mask:m,nh:a[4]})});
+  eat(`(?:svi${sp}(?:vlan)?|interface${sp}vlan|ip${sp}(?:ให้|ของ)?${sp}vlan|ไอพี${sp}vlan)${sp}(\\d+)${sp}(?:ip|=|เป็น)?${sp}${IP}(?:${sp}\\/${sp}(\\d{1,2})|\\s+${IP})?`,a=>out.push({kind:'svi',vlan:+a[1],state:'up',ip:a[2],mask:mask(a[3],a[4])}));
+  eat(`(?:default${sp}-?${sp}gateway|เกตเวย์)${sp}(?:เป็น|=)?${sp}${IP}`,a=>out.push({kind:'gw',ip:a[1]}));
+  // Port Security
+  eat(`(?:port${sp}-?${sp}security|พอร์ตซีเคียว)${sp}(?:ที่|บน|on)?${sp}(?:พอร์ต|port)?${sp}${G}([^\\n]{0,60})`,a=>{const i=port(a[1]),rest=a[2]||'';if(i==null)return;
+    if(/ปิด|off|disable/i.test(rest)){out.push({kind:'portsec',iface:i,on:false,max:1,viol:'restrict',sticky:false});return}
+    const mx=rest.match(/(?:max(?:imum)?|สูงสุด)\s*(\d+)/i),vi=rest.match(/protect|restrict|shutdown/i);
+    out.push({kind:'portsec',iface:i,on:true,max:mx?+mx[1]:1,viol:vi?vi[0].toLowerCase():'restrict',sticky:/sticky/i.test(rest)||!/no\s*sticky/i.test(rest)})});
+  eat(`(?:ล้าง|clear)${sp}sticky[^\\n]*?${G}`,a=>{const i=port(a[1]);if(i!=null)out.push({kind:'psclear',iface:i})});
+  eat(`errdisable${sp}recovery${sp}(psecure-violation|bpduguard|link-flap|all)?(?:[^\\d\\n]{0,20}(\\d+))?`,a=>out.push({kind:'errdis',on:true,cause:a[1]||'psecure-violation',interval:+(a[2]||300)}));
+  // port features
+  eat(`(?:กู้|recover)${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[1]);if(i!=null)out.push({kind:'errrec',iface:i})});
+  eat(`(portfast|bpdu${sp}guard)[^\\n]{0,20}?${G}`,a=>{const i=port(a[2]);if(i!=null){const ex=out.find(b=>b.kind==='stp'&&b.iface===i),p=S.ports[i];const b=ex||{kind:'stp',iface:i,pf:p.portfast,bg:p.bpdu};if(/portfast/i.test(a[1]))b.pf=true;else b.bg=true;if(!ex)out.push(b)}});
+  eat(`voice${sp}vlan${sp}(\\d+)${sp}(?:ที่|บน|on)?${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[2]);if(i!=null)out.push({kind:'voice',iface:i,vlan:+a[1]})});
+  eat(`speed${sp}(\\d+|auto)(?:${sp}(?:duplex)?${sp}(full|half|auto))?${sp}(?:ที่|บน|on)?${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[3]);if(i!=null)out.push({kind:'speed',iface:i,speed:a[1],duplex:a[2]||(a[1]==='auto'?'auto':'full')})});
+  eat(`(?:description|คำอธิบาย|ตั้งชื่อพอร์ต)${sp}(?:พอร์ต|port)?${sp}${G}${sp}(?:ว่า|เป็น|=)?${sp}"?([A-Za-z0-9_.\\-]+)"?`,a=>{const i=port(a[1]);if(i!=null)out.push({kind:'desc',iface:i,text:a[2]})});
+  // VLAN / access / shutdown (original)
+  eat(`(?:สร้าง|create)${sp}vlan${sp}(\\d+)(?:${sp}(?:ชื่อ|name)${sp}([A-Za-z0-9_-]+))?`,a=>out.push({kind:'vlan',op:'create',vlan:+a[1],name:a[2]||''}));
+  eat(`(?:เปลี่ยนชื่อ|rename)${sp}vlan${sp}(\\d+)${sp}(?:เป็น|to)?${sp}([A-Za-z0-9_-]+)`,a=>out.push({kind:'vlan',op:'rename',vlan:+a[1],name:a[2]}));
+  eat(`(?:ลบ|delete)${sp}vlan${sp}(\\d+)`,a=>out.push({kind:'vlan',op:'delete',vlan:+a[1]}));
+  eat(`${G}\\D{0,12}vlan${sp}(\\d+)`,a=>{const i=port(a[1]);if(i!=null)out.push({kind:'access',iface:i,vlan:+a[2]})});
+  eat(`(no${sp}shutdown|เปิด|ปิด|shutdown)${sp}(?:พอร์ต|port)?${sp}${G}`,a=>{const i=port(a[2]);if(i!=null)out.push({kind:'iface',iface:i,state:/no|เปิด/i.test(a[1])?'up':'down'})});
+  S.modal={type:'ai',loading:true};render();
+  setTimeout(()=>{if(!out.length){S.modal={type:'ai'};S.form.err=(notes.length?notes.join(' · ')+' · ':'')+'AI ไม่พบคำสั่งที่สร้างเป็นบล็อกได้ ลองระบุ VLAN ID / พอร์ต เช่น Gi0/1 / IP ให้ชัดเจน';render();return}
+    const ORD={vlan:0,svi:1,gw:2,trunk:3,access:3,voice:3,speed:3,desc:3,stp:3,iface:3,errrec:3,portsec:4,psclear:4,errdis:4,etherchannel:5,route:6,hsrp:7,ospf:7};
+    out.sort((x,y)=>((x.kind==='vlan'&&x.op==='delete')?9:ORD[x.kind])-((y.kind==='vlan'&&y.op==='delete')?9:ORD[y.kind]));
+    out.forEach(b=>b.src='ai');S.modal={type:'ai',result:out,notes};S.form.err='';render()},1100)}
+function acceptAI(){S.modal.result.forEach(b=>{b.id=S.nextId++;b.on=true;S.blocks.push(b)});const n=S.modal.result.length;S.modal=null;snack(`เพิ่ม ${n} บล็อกจาก AI แล้ว`)}
+
+function editorDryRun(){S.dry={blocks:S.blocks.filter(b=>b.on),from:'editor'};S.confirmText='';go('dryrun')}
+function quickDryRun(){const p=S.ports[S.selPort],c=S.cfg,b=[];
+  if(c.vlan!==p.vlan)b.push({kind:'access',iface:S.selPort,vlan:c.vlan});
+  if(c.admin!==p.admin)b.push({kind:'iface',iface:S.selPort,state:c.admin?'up':'down'});
+  S.dry={blocks:b,from:'config'};S.confirmText='';go('dryrun')}
+
+function applyPipeline(){
+  const all=analyze(S.dry.blocks),res=all.filter(r=>r.cli.length);
+  const net=res.some(r=>CAT[r.b.kind].net),useNet=net&&(res.some(r=>CAT[r.b.kind].net==='force')||S.useNet);
+  const n=++S.snap,fail=S.simFail,t=()=>nowStr().slice(11),pre=confSnap();
+  const verifies=[...new Set(res.map(r=>r.verify).filter(Boolean))];
+  const steps=[
+    {l:'ขอ Global Lock จาก NetOps Server',d:'job #'+(41+n)+' · ไม่มีผู้ใช้อื่นถือ lock'},
+    {l:`Snapshot running-config (#${n})`,d:'secrets masked · ใช้ configure replace ย้อนได้ทั้งไฟล์'},
+    {l:'Uplink/Management Protection (live state)',d:'MGMT/UPLINK ไม่เปลี่ยนจาก Dry-Run'},
+    ...(useNet?[{l:'ตั้งตาข่ายกันพลาด: reload in 10',d:'Reload scheduled in 10 minutes'}]:[]),
+    {l:`ส่ง ${res.reduce((a,r)=>a+r.cli.length,0)} บรรทัดคำสั่งผ่าน SSH`,d:'configure terminal … end'},
+    {l:'ตรวจผล post-conditions',d:verifies.join(' · ')||'—',verify:1},
+    ...(useNet?[{l:'ยกเลิกตาข่าย: reload cancel',d:'--- SHUTDOWN ABORTED ---'}]:[])
+  ].map((x,i)=>({...x,l:(i+1)+'. '+x.l,st:'wait'}));
+  S.modal={type:'pipeline',steps,done:false};render();
+  const finish=()=>{
+    S.console.push(`[${t()}] lock released`);
+    const at=nowStr(),d=res.map(r=>blockText(r.b)).join(', ');
+    S.snapStore[n]=pre;S.snapMeta[n]={at,d};
+    S.history.unshift({t:'info',title:`Snapshot #${n} taken`,at,by:S.user,d:`snapshot ${n}`});
+    const cl=res.flatMap(r=>r.cli),rbl=[...res].reverse().flatMap(r=>r.rb);
+    const vcmd=verifies.filter(v=>/^(show|ping)/.test(v)).map(v=>'>'+v.split(' (')[0].split(' →')[0]);
+    sshLog([...(useNet?['>reload in 10','<Reload scheduled in 10 minutes by netops on vty0 (192.168.1.120)','<Proceed with reload? [confirm]','>y']:[]),
+      '>show running-config','<Building configuration... (snapshot #'+n+', secrets masked)','>configure terminal',...cl.map(c=>'>'+c),'>end',...vcmd,
+      ...(fail?['!verify FAILED — sending inverse commands','>configure terminal',...rbl.map(c=>'>'+c),'>end','!original state verified']:['!all post-conditions hold']),
+      ...(useNet?['>reload cancel','<***','<*** --- SHUTDOWN ABORTED ---','<***']:[])]);
+    audit('s1 (192.168.1.50)',(fail?'change.rollback: ':'change.apply: ')+d,!fail);
+    if(fail){S.history.unshift({t:'warn',title:'Verification failed — rolled back',at,by:S.user,d:d+' · original state verified',port:portOf(res)})}
+    else{applyChanges(all.final);S.unsaved.push({at,by:S.user,d,cli:cl});
+      S.history.unshift({t:'ok',title:'Applied and verified',at,by:S.user,d:d+' · all post-conditions hold',port:portOf(res)});
+      if(S.dry.from==='editor')S.blocks=S.blocks.filter(b=>!b.on);S.lastVerified=at}
+    S.modal.done=true;S.modal.ok=!fail;S.simFail=false;render()};
+  let i=0;
+  const tick=()=>{
+    if(i>0){const x=steps[i-1];
+      if(x.verify&&fail){x.st='fail';x.d='post-condition ไม่ผ่าน';steps.splice(i,0,{l:'↺ Auto-Rollback: ส่ง inverse commands และตรวจสถานะเดิม',st:'rb',d:'original state verified'});i++;S.console.push(`[${t()}] verify FAILED → rollback sent, original state verified`)}
+      else{x.st='done';S.console.push(`[${t()}] ${x.l.replace(/^\d+\. /,'')} — ok`)}}
+    if(i<steps.length){steps[i].st='run';i++;render();setTimeout(tick,650);return}
+    finish()};
+  tick()}
+const portOf=res=>{const r=res.find(r=>r.b.iface!=null);return r?S.ports[r.b.iface].n:undefined};
+function applyChanges(final){Object.assign(S,clone(final));
+  if(S.view==='dryrun'&&S.dry.from==='config'){const p=S.ports[S.selPort];S.cfg={vlan:p.vlan,admin:p.admin}}}
+function doReload(){const lost=S.unsaved.length;
+  sshLog(['>reload','<Proceed with reload? [confirm]','>y','!connection closed by remote host']);audit('s1 (192.168.1.50)','device.reload'+(lost?` (${lost} unsaved changes discarded)`:''));
+  S.history.unshift({t:'err',title:'Reload requested',at:nowStr(),by:S.user,d:`reload s1 — running-config reverted to startup-config${lost?` · ${lost} รายการที่ยังไม่ save หายไป`:''}`});
+  Object.assign(S,clone(S.startup));S.unsaved=[];S.reloadAt=null;S.modal=null;
+  S.console.push(`[${nowStr().slice(11)}] reload s1 sent by ${S.user} — device going down`);S.deviceOnline=false;snack('ส่งคำสั่ง Reload แล้ว · sw1 กำลังรีสตาร์ต','info');go('ports')}
+const devTarget='s1 (192.168.1.50)';
+function confirmBox(title,body,fn,{need=false,red=false,label='ยืนยัน'}={}){S.form={confirm:''};S.modal={type:'confirm',title,body,fn,need,red,label};render()}
+function confirmSave(){confirmBox('บันทึกลง startup-config?',`<p>จะบันทึกการเปลี่ยนแปลง <b>${S.unsaved.length} รายการ</b> ให้คงอยู่หลังรีบูต</p><p class="font-mono text-sm bg-gray-100 rounded-lg p-3 mt-3">copy running-config startup-config</p><p class="text-sm text-gray-500 mt-2">หลังบันทึก reload จะไม่ย้อนการเปลี่ยนแปลงเหล่านี้อีก — ถ้าต้องการย้อน ให้ใช้ configure replace</p>`,'doSave()',{label:'บันทึก'})}
+function doSave(){const n=S.unsaved.length;sshLog(['>copy running-config startup-config','<Destination filename [startup-config]?','>','<Building configuration...','<[OK]']);
+  audit(devTarget,`config.save: write memory (${n} changes)`);S.history.unshift({t:'ok',title:'Saved to startup-config',at:nowStr(),by:S.user,d:`${n} รายการถูกบันทึกถาวร`});
+  S.startup=confSnap();S.unsaved=[];S.modal=null;snack('บันทึกลง startup-config แล้ว')}
+function confirmReloadIn(m){confirmBox(`ตั้ง reload in ${m}?`,`<p>สวิตช์จะรีบูตอัตโนมัติในอีก ${m} นาที ถ้าไม่ได้กด <span class="font-mono">reload cancel</span></p>${S.unsaved.length?`<p class="text-orange-700 text-sm mt-2">มี ${S.unsaved.length} รายการที่ยังไม่ save — จะหายถ้ารีโหลดจริง</p>`:''}`,`reloadIn(${m})`)}
+function reloadIn(m){const d=new Date(Date.now()+m*60000);S.reloadAt=`${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  sshLog([`>reload in ${m}`,`<Reload scheduled for ${S.reloadAt} (in ${m} minutes) by netops on vty0`,'<Proceed with reload? [confirm]','>y']);audit(devTarget,`device.reload_in: ${m} min`);S.modal=null;snack(`ตั้ง reload in ${m} แล้ว (${S.reloadAt})`,'info')}
+function reloadCancel(){sshLog(['>reload cancel','<***','<*** --- SHUTDOWN ABORTED ---','<***']);audit(devTarget,'device.reload_cancel');S.reloadAt=null;snack('ยกเลิกการรีโหลดแล้ว')}
+function confirmReplace(n){const m=S.snapMeta[n]||{};confirmBox(`ย้อนคอนฟิกไป Snapshot #${n}?`,`<p>running-config ทั้งหมดจะถูกแทนที่ด้วย snapshot เมื่อ ${esc(m.at||'')} (ก่อน: ${esc(m.d||'-')})</p><p class="font-mono text-sm bg-gray-100 rounded-lg p-3 mt-3">configure replace flash:netscan-snap-${n}.cfg force</p><p class="text-sm text-red-600 mt-2">การเปลี่ยนแปลงทั้งหมดหลังจุดนี้จะถูกยกเลิก</p>`,`doReplace(${n})`,{need:true,red:true,label:'ย้อนคอนฟิก'})}
+function doReplace(n){Object.assign(S,clone(S.snapStore[n]));S.unsaved.push({at:nowStr(),by:S.user,d:`configure replace → snapshot #${n}`,cli:[`configure replace flash:netscan-snap-${n}.cfg force`]});
+  sshLog([`>configure replace flash:netscan-snap-${n}.cfg force`,'<Total number of passes: 1','<Rollback Done','>show running-config | count','!state matches snapshot #'+n]);audit(devTarget,`config.replace: snapshot #${n}`);
+  S.history.unshift({t:'warn',title:`Configure replace → snapshot #${n}`,at:nowStr(),by:S.user,d:'running-config แทนที่ด้วย snapshot (ยังไม่ save)'});S.modal=null;snack(`ย้อนคอนฟิกไป Snapshot #${n} แล้ว`)}
+function clearMac(){sshLog(['>clear mac address-table dynamic']);audit(devTarget,'exec: clear mac address-table dynamic');S.macCleared=Date.now();snack('ล้างตาราง MAC แล้ว · สวิตช์จะเรียนรู้ใหม่ภายในไม่กี่วินาที')}
+function clearCounters(){sshLog(['>clear counters','<Clear "show interface" counters on all interfaces [confirm]','>y']);audit(devTarget,'exec: clear counters');S.ports.forEach(p=>S.ctrClear[p.n]=true);snack('ล้างตัวนับทุกพอร์ตแล้ว')}
+function confirmReload(){confirmBox('รีสตาร์ต sw1?',`<p>เครือข่ายในตู้ ${esc(S.loc)} จะหยุดชะงักประมาณ 2–5 นาที</p>${S.unsaved.length?`<p class="text-red-600 mt-2">การเปลี่ยนแปลงที่ยังไม่บันทึกถาวร ${S.unsaved.length} รายการจะหายไป</p>`:''}`,'doReload()',{need:true,red:true,label:'ยืนยันคำสั่งรีโหลด (Reload)'})}
+
+/* ===================== RENDER ===================== */
+let lastView=null;
+function demoPanel(){
+  const sw=(on,fn,l)=>`<button onclick="${fn}" class="w-full flex items-center justify-between gap-4 py-1.5"><span>${l}</span><span class="w-9 h-5 rounded-full relative shrink-0 ${on?'bg-primary':'bg-gray-300'}"><span class="absolute top-0.5 ${on?'left-4':'left-0.5'} w-4 h-4 bg-white rounded-full transition-all"></span></span></button>`;
+  return S.demoOpen?`<div class="bg-white/95 backdrop-blur rounded-2xl shadow-xl border p-4 w-64 pop">
+    <div class="flex justify-between items-center mb-2"><b>🧪 โหมดจำลอง</b><button onclick="S.demoOpen=false;render()" class="text-gray-500"><i class="ph ph-x"></i></button></div>
+    <p class="text-[11px] text-gray-500 mb-2">อยู่นอกแอป ใช้สลับสถานะเพื่อดูหน้าจอแต่ละแบบ</p>
+    ${sw(S.serverOnline,'S.serverOnline=!S.serverOnline;render()','NetOps Server ออนไลน์')}
+    ${sw(S.deviceOnline,'S.deviceOnline=!S.deviceOnline;render()','เข้าถึงสวิตช์ sw1 ได้')}
+    ${sw(isAdmin(),"S.role=isAdmin()?'operator':'admin';render()",'บทบาท Admin')}
+    ${sw(S.ports[7].up,"S.ports[7].up=!S.ports[7].up;render()",'เสียบสาย Gi0/7 (Link)')}</div>`
+  :`<button onclick="S.demoOpen=true;render()" class="bg-gray-900/80 text-white rounded-full px-4 py-2 shadow-lg">🧪 โหมดจำลอง</button>`}
+/* ---------- in-app tutorial ---------- */
+S.tour={open:true,i:0,list:false};
+function tourReady(){if(S.view==='login'){S.user='non';audit('app','auth.login: role admin')}S.serverOnline=true;S.deviceOnline=true;S.role='admin';S.modal=null;S.sheet=false;S.menu=false;S.devMenu=false;S.simFail=false;S.confirmText=''}
+const TB=(...x)=>x.map(v=>`<b class="text-gray-900">${v}</b>`).join(' → ');
+const TOUR=[
+ {t:'เตรียมเดโม',b:`ในแอปจริงแอปจะเชื่อมต่อเองหลังล็อกอิน ในเดโมกด <b>ทำให้ดู</b> เพื่อ: ล็อกอินเป็น non, เปิด NetOps Server, เชื่อมสวิตช์ sw1 และตั้งบทบาทเป็น Admin<br><span class="text-gray-500">สลับสถานะเองได้ทุกเมื่อที่ปุ่ม 🧪 โหมดจำลอง มุมซ้ายล่าง</span>`,demo:()=>{tourReady();go('dashboard')}},
+ {t:'อ่านผังพอร์ต',b:`${TB('Dashboard','กดการ์ด sw1')}<br>• <span class="text-green-700">เขียว</span> = Link Up · <span class="text-red-600">แดง</span> = Down / err-disabled · เทา = shutdown<br>• 🔒 = พอร์ตป้องกัน (MGMT / UPLINK)<br>แตะแต่ละพอร์ตเพื่อดูรายละเอียดด้านล่าง ลองแตะ <b>พอร์ต 07</b> จะเห็นว่าถูกปิดเพราะ port-security`,go:()=>{tourReady();S.selPort=6;go('ports')}},
+ {t:'Quick Config พอร์ตเดียว',b:`${TB('แตะพอร์ต 02','ตั้งค่าพอร์ตนี้ (Quick Config)')}<br>เปลี่ยน VLAN หรือ Enable/Disable แล้วกด <b>Dry-Run แล้วยืนยันคำสั่ง</b><br><span class="text-gray-500">ลองแตะพอร์ต 01 ดู — แก้ไม่ได้เพราะเป็นเส้นทาง Management ของแอปเอง</span>`,go:()=>{tourReady();S.selPort=1;go('ports')},demo:()=>{tourReady();S.selPort=1;openConfig();S.cfg.vlan=200;render()}},
+ {t:'อ่านผล Dry-Run แล้ว Apply',b:`หน้าผล Dry-Run บอก 3 อย่าง:<br>1) สถานะแต่ละบล็อก: ผ่าน / ต้องยืนยัน / เสี่ยงสูง / ถูกปฏิเสธ / ข้าม<br>2) <span class="text-green-700">คำสั่งที่จะส่ง</span> (กล่องดำ)<br>3) <span class="text-amber-700">คำสั่ง Rollback</span> ถ้าตรวจผลไม่ผ่าน<br>กด <b>Apply</b> ด้านล่าง แล้วดู Pipeline ทำงานทีละขั้น`,demo:()=>{tourReady();S.selPort=1;openConfig();S.cfg.vlan=200;quickDryRun()}},
+ {t:'Block Editor: เพิ่มบล็อกเอง',b:`${TB('Dashboard','Block Editor','+ เพิ่มบล็อก')}<br>เลือก <b>กู้พอร์ต err-disabled</b> → เลือก Gi0/6 → <b>เพิ่มบล็อก</b> → <b>🔍 Dry-Run บน s1</b> → Apply<br><span class="text-gray-500">เพิ่มได้หลายบล็อก เลื่อนลำดับด้วยลูกศร ปิดชั่วคราวด้วยสวิตช์</span>`,go:()=>{tourReady();go('editor')},demo:()=>{tourReady();go('editor');openBlk('errrec')}},
+ {t:'ให้ AI ร่างบล็อก',b:`${TB('Block Editor','✨ AI Assistant')}<br>พิมพ์ภาษาคน หรือกดตัวอย่างใต้ช่องพิมพ์ → <b>ถาม AI</b> → <b>เพิ่มลงชุดบล็อก</b><br><span class="text-gray-500">AI แค่ร่าง — ยังต้อง Dry-Run และยืนยันเองเสมอ · ลองพิมพ์ "เปลี่ยน username admin" จะถูกปฏิเสธ</span>`,go:()=>{tourReady();go('editor')},demo:()=>{tourReady();go('editor');openAI();S.form.ai='SVI vlan 100 ip 10.10.100.1/24 และ HSRP vlan 100 ip 10.10.100.254';render()}},
+ {t:'คำสั่งเสี่ยงสูง + ตาข่ายกันพลาด',b:`บล็อกกลุ่ม <b>ขั้นสูง L2/L3</b> (SVI, Route, HSRP, OSPF, EtherChannel) จะมีกล่องเหลือง <b class="font-mono">reload in 10</b> ในหน้า Dry-Run<br>พิมพ์ <b class="font-mono">s1</b> ยืนยัน → <b>Apply</b> → Pipeline 7 ขั้น (ตั้งเวลารีบูตก่อนส่ง ตรวจผลผ่านค่อย reload cancel)`,demo:()=>{tourReady();S.blocks=[{id:S.nextId++,on:true,kind:'svi',vlan:100,state:'up',ip:'10.10.100.1',mask:'255.255.255.0'},{id:S.nextId++,on:true,kind:'hsrp',op:'set',vlan:100,grp:1,vip:'10.10.100.254',prio:110,pre:true}];editorDryRun()}},
+ {t:'ตรวจผลด้วยคำสั่ง show',b:`${TB('หน้าสถานะพอร์ต','⚙️ มุมขวาบน','แท็บ Diagnostics')}<br>กดเลือกคำสั่ง → ถ้ามีช่องให้เลือกพอร์ต/VLAN/IP → <b>▶ รัน</b><br><span class="text-gray-500">ผลเปลี่ยนตามสิ่งที่เพิ่ง Apply เช่น เพิ่ม SVI แล้วรัน show ip interface brief จะเห็น Vlan100</span>`,go:()=>{tourReady();S.tab='diag';go('device')},demo:()=>{tourReady();S.tab='diag';S.diag={cmd:'status',arg:''};go('device');runShow()}},
+ {t:'ดู Auto-Rollback',b:`ในหน้า Dry-Run ติ๊ก <b>จำลอง: verify ไม่ผ่าน</b> แล้วกด Apply<br>ขั้น "ตรวจผล" จะแดง แล้วระบบส่งคำสั่งย้อนให้เองอัตโนมัติ สถานะกลับเหมือนเดิม และบันทึกลงแท็บ History`,demo:()=>{tourReady();S.blocks=[{id:S.nextId++,on:true,kind:'desc',iface:1,text:'TEST-ROLLBACK'}];editorDryRun();S.simFail=true;render()}},
+ {t:'บันทึกถาวร / Reload / ย้อนคอนฟิก',b:`${TB('หน้า sw1','⋮','Device Actions')}<br>• 💾 การ์ดบนสุดแสดง diff ที่ยังไม่ save → <b>บันทึกลง startup-config</b><br>• ลอง <b>Reload</b> ก่อน save → การเปลี่ยนแปลงหายจริง<br>• <b>configure replace</b> ย้อนทั้งไฟล์ไป snapshot ไหนก็ได้`,go:()=>{tourReady();go('actions')}},
+ {t:'ประวัติ ผู้ใช้ และ session',b:`${TB('Dashboard','⋮')}<br>• <b>Audit Trail Log</b> — ทุกการกระทำ ค้นหาได้ ส่งออก CSV<br>• <b>SSH Console</b> — คำสั่งที่แอปส่งจริงและ output ของสวิตช์<br>• <b>จัดการผู้ใช้</b> — เพิ่มผู้ใช้ เปลี่ยนบทบาท และ <b>Kick</b> session ที่ใช้งานอยู่`,go:()=>{tourReady();go('audit')}},
+];
+function tourGo(k){const x=TOUR[S.tour.i];(k==='demo'?x.demo:x.go)();render()}
+function tourStep(d){S.tour.i=Math.max(0,Math.min(TOUR.length-1,S.tour.i+d));S.tour.list=false;render()}
+function tourPanel(){const T=S.tour,x=TOUR[T.i];
+  if(!T.open)return `<button onclick="S.tour.open=true;render()" class="bg-primary text-white rounded-full px-4 py-2 shadow-lg">📘 สอนใช้</button>`;
+  return `<div class="bg-white rounded-2xl shadow-2xl border w-[340px] max-w-[calc(100vw-24px)] pop">
+    <div class="flex items-center justify-between px-4 pt-3"><button onclick="S.tour.list=!S.tour.list;render()" class="font-bold flex items-center gap-1.5">📘 สอนใช้ <span class="text-gray-400 font-normal">${T.i+1}/${TOUR.length}</span><i class="ph ph-caret-${T.list?'up':'down'}"></i></button>
+      <button onclick="S.tour.open=false;render()" class="text-gray-400 hover:text-gray-700"><i class="ph ph-minus"></i></button></div>
+    <div class="h-1 bg-gray-100 mx-4 mt-2 rounded"><div class="h-1 bg-primary rounded" style="width:${(T.i+1)/TOUR.length*100}%"></div></div>
+    ${T.list?`<div class="max-h-72 overflow-y-auto p-2">${TOUR.map((y,i)=>`<button onclick="S.tour.i=${i};S.tour.list=false;render()" class="w-full text-left px-3 py-2 rounded-lg ${i===T.i?'bg-indigo-50 text-indigo-800 font-semibold':'hover:bg-gray-50'}">${i+1}. ${y.t}</button>`).join('')}</div>`:`
+    <div class="px-4 pt-3 pb-1"><p class="font-semibold text-base mb-1.5">${T.i+1}. ${x.t}</p><div class="text-[13px] leading-relaxed text-gray-700">${x.b}</div></div>
+    <div class="flex gap-2 px-4 pt-3">${x.go?`<button onclick="tourGo('go')" class="flex-1 rounded-xl border border-gray-300 py-2 font-medium hover:bg-gray-50">พาไปหน้านี้</button>`:''}${x.demo?`<button onclick="tourGo('demo')" class="flex-1 rounded-xl bg-primary text-white py-2 font-medium">▶ ทำให้ดู</button>`:''}</div>`}
+    <div class="flex justify-between px-4 py-3"><button onclick="tourStep(-1)" class="text-gray-500 ${T.i?'':'invisible'}">‹ ก่อนหน้า</button><button onclick="tourStep(1)" class="text-primary font-semibold ${T.i<TOUR.length-1?'':'invisible'}">ถัดไป ›</button></div>
+  </div>`}
+function render(resetScroll){
+  $('demo').innerHTML=S.view==='login'?'':demoPanel();$('tour').innerHTML=tourPanel();
+  const scr=$('screen'),old=scr.querySelector('.view'),top=old&&lastView===S.view&&!resetScroll?old.scrollTop:0;
+  scr.innerHTML=`<div class="view">${V[S.view]()}</div>${overlay()}`;
+  const nv=scr.querySelector('.view');nv.scrollTop=top;lastView=S.view;
+  if(S.view==='console'){const c=$('con');if(c)c.scrollTop=c.scrollHeight}
+  if(S.view==='ssh'&&S.follow){const c=$('sshbox');if(c)c.scrollTop=c.scrollHeight}
+}
+setInterval(()=>{const d=new Date();$('clock').textContent=`${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if(S.view==='console'&&S.serverOnline&&!S.modal){S.console.push(`[${nowStr().slice(11)}] heartbeat ok · lock free · clients 1`);if(S.console.length>60)S.console.shift();render()}},5000);
+render();
+</script>
+</body>
+</html>
+
+</body></html>
